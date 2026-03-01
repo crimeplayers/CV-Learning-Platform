@@ -24,7 +24,7 @@ export const getAiClient = () => {
   const config: Record<string, string> = {};
   settings.forEach(s => config[s.key] = s.value);
 
-  const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
+  const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-v15cf8994429b44e16fa51f281666da939eddcfce99H0yt3';
   if (!apiKey) {
     throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
   }

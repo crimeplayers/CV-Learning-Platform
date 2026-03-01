@@ -63,6 +63,13 @@ export default async (req: Request) => {
 
           const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
           db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+
+          const planDir = path.join(process.env.DATA_DIR || '/data', 'plan');
+          if (!fs.existsSync(planDir)) fs.mkdirSync(planDir, { recursive: true });
+          const files = fs.readdirSync(planDir).filter(f => f.startsWith(`${user.id}-${unitId}-plan-`) && f.endsWith('.md'));
+          const version = files.length + 1;
+          const filename = `${user.id}-${unitId}-plan-${version}.md`;
+          fs.writeFileSync(path.join(planDir, filename), newPlanContent, 'utf-8');
         }
       } catch (err) {
         console.error('Failed to adjust plan', err);
