@@ -1,8 +1,12 @@
 import jwt from 'jsonwebtoken';
 import OpenAI from 'openai';
 import db from './db';
+import fs from 'fs';
+import path from 'path';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
+const DATA_DIR = process.env.DATA_DIR || '/data';
+const MAX_FILE_PREVIEW = 8000;
 
 export const authenticate = (req: Request) => {
   const authHeader = req.headers.get('authorization');
@@ -30,4 +34,30 @@ export const getAiClient = () => {
   const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
 
   return { client, model };
+};
+
+export const buildPromptWithFiles = (basePrompt: string) => {
+  const match = basePrompt.match(/FILES:\s*([^\n]+)/i);
+  const files = match ? match[1].split(',').map(f => f.trim()).filter(Boolean) : [];
+
+  const fileBlocks: string[] = [];
+  const usedFiles: string[] = [];
+  const dataRoot = path.resolve(DATA_DIR);
+
+  for (const filePath of files) {
+    const resolved = path.isAbsolute(filePath)
+      ? path.resolve(filePath)
+      : path.resolve(dataRoot, filePath);
+
+    if (!resolved.startsWith(dataRoot)) continue;
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue;
+
+    const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
+    fileBlocks.push(`[文件: ${resolved}]\n${content}`);
+    usedFiles.push(resolved);
+  }
+
+  const appended = fileBlocks.length > 0 ? `\n\n[附加文件内容]\n${fileBlocks.join('\n\n')}` : '';
+  const prompt = `${basePrompt}${appended}`;
+  return { prompt, files: usedFiles };
 };

@@ -11,6 +11,8 @@ import fs from 'fs';
 import { prompts } from './server/prompts';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
+const DATA_DIR = process.env.DATA_DIR || '/data';
+const MAX_FILE_PREVIEW = 8000;
 
 // Ensure uploads directory exists
 const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
@@ -55,6 +57,33 @@ async function startServer() {
     const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
 
     return { client, model };
+  };
+
+  const buildPromptWithFiles = (basePrompt: string) => {
+    const match = basePrompt.match(/FILES:\s*([^\n]+)/i);
+    const files = match ? match[1].split(',').map(f => f.trim()).filter(Boolean) : [];
+
+    const fileBlocks: string[] = [];
+    const usedFiles: string[] = [];
+    const dataRoot = path.resolve(DATA_DIR);
+
+    for (const filePath of files) {
+      const resolved = path.isAbsolute(filePath)
+        ? path.resolve(filePath)
+        : path.resolve(dataRoot, filePath);
+
+      if (!resolved.startsWith(dataRoot)) continue; // prevent path escape
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue;
+
+      const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
+      fileBlocks.push(`[文件: ${resolved}]
+${content}`);
+      usedFiles.push(resolved);
+    }
+
+    const appended = fileBlocks.length > 0 ? `\n\n[附加文件内容]\n${fileBlocks.join('\n\n')}` : '';
+    const prompt = `${basePrompt}${appended}`;
+    return { prompt, files: usedFiles };
   };
 
   // Auth Middleware
@@ -226,7 +255,8 @@ async function startServer() {
         }
       } catch (e) {}
 
-      const prompt = prompts.generatePlan(unit, resourcesText);
+      const basePrompt = prompts.generatePlan(unit, resourcesText);
+      const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const response = await client.chat.completions.create({
         model,
@@ -242,7 +272,8 @@ async function startServer() {
         db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content) VALUES (?, ?, ?)').run(req.user.id, unitId, planContent);
       }
 
-      res.json({ plan_content: planContent });
+      const ai_raw = response.choices?.[0]?.message?.content || '';
+      res.json({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -299,7 +330,8 @@ async function startServer() {
 
     try {
       const { client, model } = getAiClient();
-      const prompt = prompts.gradeUnit(unit, plan, latestNote);
+      const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
+      const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const response = await client.chat.completions.create({
         model,
@@ -315,7 +347,7 @@ async function startServer() {
       }
       db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
-      res.json({ grade: result.grade, feedback: result.feedback });
+      res.json({ grade: result.grade, feedback: result.feedback, prompt_preview: prompt, files_used: files, ai_raw: raw });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -326,7 +358,8 @@ async function startServer() {
     const { question, context } = req.body;
     try {
       const { client, model } = getAiClient();
-      const prompt = prompts.qaAssistant(context, question);
+      const basePrompt = prompts.qaAssistant(context, question);
+      const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const response = await client.chat.completions.create({
         model,
@@ -334,7 +367,8 @@ async function startServer() {
       });
 
       const answer = response.choices?.[0]?.message?.content?.trim() || '';
-      res.json({ answer });
+      const ai_raw = response.choices?.[0]?.message?.content || '';
+      res.json({ answer, prompt_preview: prompt, files_used: files, ai_raw });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

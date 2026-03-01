@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -35,7 +35,8 @@ export default async (req: Request) => {
         }
       } catch (e) {}
 
-      const prompt = prompts.generatePlan(unit, resourcesText);
+      const basePrompt = prompts.generatePlan(unit, resourcesText);
+      const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const response = await client.chat.completions.create({
         model,
@@ -51,7 +52,8 @@ export default async (req: Request) => {
         db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content) VALUES (?, ?, ?)').run(user.id, unitId, planContent);
       }
 
-      return new Response(JSON.stringify({ plan_content: planContent }));
+      const ai_raw = response.choices?.[0]?.message?.content || '';
+      return new Response(JSON.stringify({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw }));
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }

@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -26,7 +26,8 @@ export default async (req: Request) => {
 
       try {
         const { client, model } = getAiClient();
-        const prompt = prompts.gradeUnit(unit, plan, latestNote);
+        const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
+        const { prompt, files } = buildPromptWithFiles(basePrompt);
 
         const response = await client.chat.completions.create({
           model,
@@ -42,7 +43,7 @@ export default async (req: Request) => {
         }
         db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
-        return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback }));
+        return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback, prompt_preview: prompt, files_used: files, ai_raw: raw }));
       } catch (err: any) {
         return new Response(JSON.stringify({ error: err.message }), { status: 500 });
       }

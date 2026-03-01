@@ -1,5 +1,5 @@
 import { Config } from "@netlify/functions";
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -14,7 +14,8 @@ export default async (req: Request) => {
     const { question, context } = await req.json();
     try {
       const { client, model } = getAiClient();
-      const prompt = prompts.qaAssistant(context, question);
+      const basePrompt = prompts.qaAssistant(context, question);
+      const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const response = await client.chat.completions.create({
         model,
@@ -22,7 +23,8 @@ export default async (req: Request) => {
       });
 
       const answer = response.choices?.[0]?.message?.content?.trim() || '';
-      return new Response(JSON.stringify({ answer }));
+      const ai_raw = response.choices?.[0]?.message?.content || '';
+      return new Response(JSON.stringify({ answer, prompt_preview: prompt, files_used: files, ai_raw }));
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }
