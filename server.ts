@@ -262,27 +262,43 @@ ${content}`);
   });
 
   app.post('/api/plans/generate', authenticate, async (req: any, res: any) => {
-    const { unitId } = req.body;
+    const startedAt = Date.now();
+    const { unitId, prompt: clientPrompt } = req.body;
     const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(unitId) as any;
     if (!unit) return res.status(404).json({ error: 'Unit not found' });
 
     try {
       const { client, model } = getAiClient();
-      let resourcesText = '无';
-      try {
-        const resources = JSON.parse(unit.resources || '[]');
-        if (resources.length > 0) {
-          resourcesText = resources.map((r: any) => `- ${r.title}: ${r.url || ''} ${r.description || ''}`).join('\n');
-        }
-      } catch (e) {}
+      let basePrompt: string | undefined = clientPrompt;
+      if (!basePrompt) {
+        let resourcesText = '无';
+        try {
+          const resources = JSON.parse(unit.resources || '[]');
+          if (resources.length > 0) {
+            resourcesText = resources.map((r: any) => `- ${r.title}: ${r.url || ''} ${r.description || ''}`).join('\n');
+          }
+        } catch (e) {}
 
-      const basePrompt = prompts.generatePlan(unit, resourcesText);
+        basePrompt = prompts.generatePlan(unit, resourcesText);
+      }
       const { prompt, files } = buildPromptWithFiles(basePrompt);
 
-      const response = await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: prompt }],
+      const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 30000);
+      let timeoutId: NodeJS.Timeout | null = null;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('AI_REQUEST_TIMEOUT')), aiTimeoutMs);
       });
+
+      const response = await Promise.race([
+        client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 600,
+          temperature: 0.7,
+        }),
+        timeoutPromise
+      ]);
+      if (timeoutId) clearTimeout(timeoutId);
 
       const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
       
@@ -296,9 +312,15 @@ ${content}`);
       const saved = savePlanFile(req.user.id, Number(unitId), planContent);
 
       const ai_raw = response.choices?.[0]?.message?.content || '';
-      res.json({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw, plan_file: saved.filepath, plan_version: saved.version });
+      const elapsed_ms = Date.now() - startedAt;
+      console.log('[plans.generate] elapsed_ms=%d unitId=%s user=%s', elapsed_ms, unitId, req.user?.id);
+      res.json({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw, plan_file: saved?.filepath, plan_version: saved?.version, elapsed_ms });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const isTimeout = err?.message === 'AI_REQUEST_TIMEOUT';
+      const status = isTimeout ? 504 : 500;
+      const message = isTimeout ? 'AI generation timed out. Try again with shorter input.' : err?.message || 'Unknown error';
+      console.error('[plans.generate] error', message, err);
+      res.status(status).json({ error: message });
     }
   });
 
