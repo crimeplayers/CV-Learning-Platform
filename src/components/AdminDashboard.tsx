@@ -51,13 +51,14 @@ export default function AdminDashboard() {
 }
 
 function UsersManagement() {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || '';
   const [users, setUsers] = useState<any[]>([]);
   const [editingUser, setEditingUser] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ username: '', password: '', role: 'student' });
 
   const fetchUsers = () => {
-    fetch('/api/admin/users', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+    fetch(`${API_BASE_URL}/api/admin/users`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
       .then(res => res.json())
       .then(data => setUsers(data));
   };
@@ -68,7 +69,7 @@ function UsersManagement() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingUser ? `/api/admin/users/${editingUser.id}` : '/api/admin/users';
+    const url = editingUser ? `${API_BASE_URL}/api/admin/users/${editingUser.id}` : `${API_BASE_URL}/api/admin/users`;
     const method = editingUser ? 'PUT' : 'POST';
     
     await fetch(url, {
@@ -85,7 +86,7 @@ function UsersManagement() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定要删除该用户吗？')) return;
-    await fetch(`/api/admin/users/${id}`, {
+    await fetch(`${API_BASE_URL}/api/admin/users/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     });
@@ -173,12 +174,13 @@ function UsersManagement() {
 }
 
 function AISettings() {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || '';
   const [settings, setSettings] = useState({ ai_api_key: '', ai_base_url: '', ai_model: 'gemini-3-flash-preview' });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    fetch('/api/admin/settings', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+    fetch(`${API_BASE_URL}/api/admin/settings`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
       .then(res => res.json())
       .then(data => {
         const newSettings = { ...settings };
@@ -196,7 +198,7 @@ function AISettings() {
     setMessage('');
     const payload = Object.entries(settings).map(([key, value]) => ({ key, value }));
     try {
-      await fetch('/api/admin/settings', {
+      await fetch(`${API_BASE_URL}/api/admin/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({ settings: payload })

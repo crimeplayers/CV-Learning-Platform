@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { BookOpen, LogOut, FileText, CheckCircle } from 'lucide-react';
 
 export default function Dashboard() {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || '';
   const [units, setUnits] = useState<any[]>([]);
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -14,7 +15,7 @@ export default function Dashboard() {
       return;
     }
 
-    fetch('/api/units', {
+    fetch(`${API_BASE_URL}/api/units`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())

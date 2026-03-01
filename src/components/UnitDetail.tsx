@@ -6,6 +6,7 @@ import SidebarAI from './SidebarAI';
 export default function UnitDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const API_BASE_URL = import.meta.env.VITE_API_URL || '';
   const [unit, setUnit] = useState<any>(null);
   const [plan, setPlan] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
@@ -24,15 +25,15 @@ export default function UnitDetail() {
       return;
     }
 
-    fetch(`/api/units/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE_URL}/api/units/${id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.json())
       .then(data => setUnit(data));
 
-    fetch(`/api/plans/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE_URL}/api/plans/${id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.json())
       .then(data => setPlan(data));
 
-    fetch(`/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE_URL}/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.json())
       .then(data => setNotes(data));
   }, [id, navigate]);
@@ -41,7 +42,7 @@ export default function UnitDetail() {
     setLoadingPlan(true);
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch('/api/plans/generate', {
+      const res = await fetch(`${API_BASE_URL}/api/plans/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ unitId: id }),
@@ -68,7 +69,7 @@ export default function UnitDetail() {
         formData.append('file', file);
       }
 
-      await fetch('/api/notes', {
+      await fetch(`${API_BASE_URL}/api/notes`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -78,10 +79,10 @@ export default function UnitDetail() {
       if (fileInputRef.current) fileInputRef.current.value = '';
       
       // Refresh notes and plan
-      fetch(`/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE_URL}/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.json())
         .then(data => setNotes(data));
-      fetch(`/api/plans/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE_URL}/api/plans/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.json())
         .then(data => setPlan(data));
     } catch (err) {
@@ -95,14 +96,14 @@ export default function UnitDetail() {
     setGrading(true);
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(`/api/grade/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/grade/${id}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       setGradeResult(data);
       // Refresh notes to show grade
-      fetch(`/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE_URL}/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.json())
         .then(data => setNotes(data));
     } catch (err) {
