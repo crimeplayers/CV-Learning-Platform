@@ -139,6 +139,28 @@ ${content}`);
     return { prompt, files: usedFiles };
   };
 
+  const parseGradeResult = (raw: string) => {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    const withoutFence = trimmed
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+
+    const candidates = [withoutFence];
+    const objectMatch = withoutFence.match(/\{[\s\S]*\}/);
+    if (objectMatch) candidates.push(objectMatch[0]);
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed && typeof parsed === 'object') return parsed as any;
+      } catch (err) {}
+    }
+    return null;
+  };
+
   // Auth Middleware
   const authenticate = (req: any, res: any, next: any) => {
     const token = req.headers.authorization?.split(' ')[1];
@@ -414,7 +436,23 @@ ${content}`);
       const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
       if (plan) {
         const { client, model } = getAiClient();
-        const prompt = prompts.adjustPlan(unit, plan, content, fileUrl);
+        const now = new Date();
+        const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
+        const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
+        const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
+        const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
+        const progressContext = [
+          `当前时间: ${now.toISOString()}`,
+          `本次笔记提交序号: 第${noteVersion}次`,
+          `本次笔记提交周次字段: ${week || '未知'}`,
+          `原计划创建时间: ${plan.created_at || '未知'}`,
+          `原计划上次更新时间: ${plan.updated_at || '未知'}`,
+          `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
+          `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
+          `单元周次范围: 第${unit.week_range}周`
+        ].join('\n');
+
+        const prompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
 
         const response = await client.chat.completions.create({
           model,
@@ -454,16 +492,38 @@ ${content}`);
         messages: [{ role: 'user', content: prompt }],
       });
 
-      const raw = response.choices?.[0]?.message?.content || '';
-      let result: any;
-      try {
-        result = JSON.parse(raw);
-      } catch (e) {
+      let raw = response.choices?.[0]?.message?.content || '';
+      let result: any = parseGradeResult(raw);
+
+      if (!result) {
+        const repairPrompt = `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`;
+        const retryResponse = await client.chat.completions.create({
+          model,
+          messages: [
+            { role: 'user', content: prompt },
+            { role: 'assistant', content: raw || '（空响应）' },
+            { role: 'user', content: repairPrompt }
+          ],
+        });
+        raw = retryResponse.choices?.[0]?.message?.content || raw;
+        result = parseGradeResult(raw);
+      }
+
+      if (!result) {
         throw new Error('AI 返回的内容不是有效的 JSON');
       }
-      db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
-      res.json({ grade: result.grade, feedback: result.feedback, prompt_preview: prompt, files_used: files, ai_raw: raw });
+      const gradeValue = result.grade;
+      const feedbackValue = typeof result.feedback === 'string' ? result.feedback.trim() : '';
+      const gradeText = typeof gradeValue === 'number' ? String(gradeValue) : String(gradeValue || '').trim();
+
+      if (!gradeText || !feedbackValue) {
+        throw new Error('AI 评分结果缺少 grade 或 feedback 字段');
+      }
+
+      db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(gradeText, feedbackValue, latestNote.id);
+
+      res.json({ grade: gradeText, feedback: feedbackValue, prompt_preview: prompt, files_used: files, ai_raw: raw });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

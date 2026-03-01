@@ -3,6 +3,28 @@ import db from './db';
 import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
+const parseGradeResult = (raw: string) => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  const candidates = [withoutFence];
+  const objectMatch = withoutFence.match(/\{[\s\S]*\}/);
+  if (objectMatch) candidates.push(objectMatch[0]);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') return parsed as any;
+    } catch (err) {}
+  }
+  return null;
+};
+
 export default async (req: Request) => {
   const url = new URL(req.url);
   let user;
@@ -34,16 +56,38 @@ export default async (req: Request) => {
           messages: [{ role: 'user', content: prompt }],
         });
 
-        const raw = response.choices?.[0]?.message?.content || '';
-        let result: any;
-        try {
-          result = JSON.parse(raw);
-        } catch (e) {
+        let raw = response.choices?.[0]?.message?.content || '';
+        let result: any = parseGradeResult(raw);
+
+        if (!result) {
+          const repairPrompt = `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`;
+          const retryResponse = await client.chat.completions.create({
+            model,
+            messages: [
+              { role: 'user', content: prompt },
+              { role: 'assistant', content: raw || '（空响应）' },
+              { role: 'user', content: repairPrompt }
+            ],
+          });
+          raw = retryResponse.choices?.[0]?.message?.content || raw;
+          result = parseGradeResult(raw);
+        }
+
+        if (!result) {
           throw new Error('AI 返回的内容不是有效的 JSON');
         }
-        db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
-        return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback, prompt_preview: prompt, files_used: files, ai_raw: raw }));
+        const gradeValue = result.grade;
+        const feedbackValue = typeof result.feedback === 'string' ? result.feedback.trim() : '';
+        const gradeText = typeof gradeValue === 'number' ? String(gradeValue) : String(gradeValue || '').trim();
+
+        if (!gradeText || !feedbackValue) {
+          throw new Error('AI 评分结果缺少 grade 或 feedback 字段');
+        }
+
+        db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(gradeText, feedbackValue, latestNote.id);
+
+        return new Response(JSON.stringify({ grade: gradeText, feedback: feedbackValue, prompt_preview: prompt, files_used: files, ai_raw: raw }));
       } catch (err: any) {
         return new Response(JSON.stringify({ error: err.message }), { status: 500 });
       }

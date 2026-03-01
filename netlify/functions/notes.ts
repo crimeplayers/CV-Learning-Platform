@@ -65,7 +65,23 @@ export default async (req: Request) => {
         const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
         if (plan) {
           const { client, model } = getAiClient();
-          const prompt = prompts.adjustPlan(unit, plan, content, fileUrl);
+          const now = new Date();
+          const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
+          const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
+          const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
+          const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
+          const progressContext = [
+            `当前时间: ${now.toISOString()}`,
+            `本次笔记提交序号: 第${noteVersion}次`,
+            `本次笔记提交周次字段: ${week || '未知'}`,
+            `原计划创建时间: ${plan.created_at || '未知'}`,
+            `原计划上次更新时间: ${plan.updated_at || '未知'}`,
+            `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
+            `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
+            `单元周次范围: 第${unit.week_range}周`
+          ].join('\n');
+
+          const prompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
 
           const response = await client.chat.completions.create({
             model,
