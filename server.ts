@@ -50,17 +50,17 @@ async function startServer() {
   const getAiClient = () => {
     const settings = db.prepare('SELECT * FROM settings').all() as any[];
     const config: Record<string, string> = {};
-    settings.forEach(s => config[s.key] = s.value);
+    settings.forEach(s => config[s.key] = typeof s.value === 'string' ? s.value.trim() : s.value);
 
-    const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-v15cf8994429b44e16fa51f281666da939eddcfce99H0yt3';
+    const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-mnVcHeOzlSwmJ2zO4n8hFdR1E9jyOUjZMmy5HrzByC8uaKRb';
     if (!apiKey) {
       throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
     }
 
-    const baseURL = config.ai_base_url || process.env.AI_BASE_URL || 'https://api.gptsapi.net/v1';
+    const baseURL = config.ai_base_url || process.env.AI_BASE_URL || 'https://api.moonshot.cn/v1';
     const timeoutMs = Number(process.env.AI_TIMEOUT_MS || 60000);
     const client = new OpenAI({ apiKey, baseURL, timeout: timeoutMs, maxRetries: 2 });
-    const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
+    const model = config.ai_model || process.env.AI_MODEL || 'kimi-k2.5';
 
     return { client, model };
   };
@@ -285,7 +285,7 @@ ${content}`);
       const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 60000);
-      const maxCompletionTokens = Number(process.env.AI_PLAN_MAX_TOKENS || 1600);
+      const maxCompletionTokens = Number(process.env.AI_PLAN_MAX_TOKENS || 4800);
 
       const callAiWithTimeout = async (userPrompt: string) => {
         let timeoutId: NodeJS.Timeout | null = null;

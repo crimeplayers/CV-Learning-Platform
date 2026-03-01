@@ -22,9 +22,9 @@ export const authenticate = (req: Request) => {
 export const getAiClient = () => {
   const settings = db.prepare('SELECT * FROM settings').all() as any[];
   const config: Record<string, string> = {};
-  settings.forEach(s => config[s.key] = s.value);
+  settings.forEach(s => config[s.key] = typeof s.value === 'string' ? s.value.trim() : s.value);
 
-  const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-v15cf8994429b44e16fa51f281666da939eddcfce99H0yt3sk-mnVcHeOzlSwmJ2zO4n8hFdR1E9jyOUjZMmy5HrzByC8uaKRb';
+  const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-mnVcHeOzlSwmJ2zO4n8hFdR1E9jyOUjZMmy5HrzByC8uaKRb';
   if (!apiKey) {
     throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
   }

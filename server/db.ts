@@ -86,13 +86,22 @@ if (!adminExists) {
 }
 
 const defaultSettings = [
-  { key: 'ai_api_key', value: '' },
-  { key: 'ai_base_url', value: '' },
-  { key: 'ai_model', value: '' }
+  { key: 'ai_api_key', value: process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || 'sk-mnVcHeOzlSwmJ2zO4n8hFdR1E9jyOUjZMmy5HrzByC8uaKRb' },
+  { key: 'ai_base_url', value: process.env.AI_BASE_URL || 'https://api.moonshot.cn/v1' },
+  { key: 'ai_model', value: process.env.AI_MODEL || 'kimi-k2.5' }
 ];
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
 for (const s of defaultSettings) {
   insertSetting.run(s.key, s.value);
+}
+
+const fillEmptySetting = db.prepare(`
+  UPDATE settings
+  SET value = ?
+  WHERE key = ? AND (value IS NULL OR TRIM(value) = '')
+`);
+for (const s of defaultSettings) {
+  fillEmptySetting.run(s.value, s.key);
 }
 
 const unitsCount = db.prepare('SELECT COUNT(*) as count FROM units').get() as { count: number };
