@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Settings, ArrowLeft, Plus, Edit, Trash2, Save, FileText } from 'lucide-react';
+import { Users, Settings, ArrowLeft, Plus, Edit, Trash2, Save, FileText, MessageSquare } from 'lucide-react';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'users' | 'records' | 'settings'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'records' | 'aiLogs' | 'settings'>('users');
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -34,6 +34,12 @@ export default function AdminDashboard() {
             <FileText className="w-5 h-5 mr-3" /> 学习记录
           </button>
           <button
+            onClick={() => setActiveTab('aiLogs')}
+            className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg ${activeTab === 'aiLogs' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-100'}`}
+          >
+            <MessageSquare className="w-5 h-5 mr-3" /> AI 交互日志
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-100'}`}
           >
@@ -50,7 +56,7 @@ export default function AdminDashboard() {
 
       {/* Main Content */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {activeTab === 'users' ? <UsersManagement /> : activeTab === 'records' ? <AdminRecords /> : <AISettings />}
+        {activeTab === 'users' ? <UsersManagement /> : activeTab === 'records' ? <AdminRecords /> : activeTab === 'aiLogs' ? <AdminAiLogs /> : <AISettings />}
       </div>
     </div>
   );
@@ -314,6 +320,94 @@ function AdminRecords() {
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function AdminAiLogs() {
+  const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    fetch(`${API_BASE_URL}/api/admin/ai-logs`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      .then(res => res.json())
+      .then(data => setLogs(data))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const formatDate = (value?: string) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  };
+
+  const preview = (text: string, len = 120) => {
+    if (!text) return '';
+    if (text.length <= len) return text;
+    return `${text.slice(0, len)}...`;
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">AI 交互日志</h2>
+          <p className="text-slate-500 mt-1">查看系统向 AI 发送的完整提示词和返回的原始内容。</p>
+        </div>
+        <button onClick={load} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">刷新</button>
+      </div>
+
+      {loading ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 text-slate-500">加载中...</div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">时间</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">用户</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">单元</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">动作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">提示词</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">AI 返回</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-slate-200">
+              {logs.map(log => (
+                <tr key={log.id} className="align-top">
+                  <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{formatDate(log.created_at)}</td>
+                  <td className="px-4 py-3 text-sm text-slate-800">{log.user_username || 'N/A'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-800">{log.unit_title || '-'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{log.action}</td>
+                  <td className="px-4 py-3 text-sm text-slate-700 max-w-xs">
+                    <details>
+                      <summary className="cursor-pointer text-indigo-600 hover:underline">{preview(log.prompt)}</summary>
+                      <pre className="mt-2 whitespace-pre-wrap text-xs bg-slate-50 border border-slate-200 rounded p-2">{log.prompt}</pre>
+                    </details>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-700 max-w-xs">
+                    <details>
+                      <summary className="cursor-pointer text-indigo-600 hover:underline">{preview(log.response)}</summary>
+                      <pre className="mt-2 whitespace-pre-wrap text-xs bg-slate-50 border border-slate-200 rounded p-2">{log.response}</pre>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">暂无日志</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 import { Config } from "@netlify/functions";
 import db from './db';
 import bcrypt from 'bcryptjs';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, logAiInteraction } from './utils';
 
 export default async (req: Request) => {
   const url = new URL(req.url);
@@ -73,6 +73,19 @@ export default async (req: Request) => {
     }
   }
 
+  if (url.pathname === '/api/admin/ai-logs' && req.method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') || 200);
+    const rows = db.prepare(`
+      SELECT l.*, u.username AS user_username, un.title AS unit_title
+      FROM ai_logs l
+      LEFT JOIN users u ON l.user_id = u.id
+      LEFT JOIN units un ON l.unit_id = un.id
+      ORDER BY l.created_at DESC
+      LIMIT ?
+    `).all(limit);
+    return new Response(JSON.stringify(rows));
+  }
+
   if (url.pathname === '/api/admin/ai/test' && req.method === 'POST') {
     try {
       const { message = '这是一次AI可用性测试，请简短回应。' } = await req.json();
@@ -82,6 +95,7 @@ export default async (req: Request) => {
         messages: [{ role: 'user', content: message }],
       });
       const reply = response.choices?.[0]?.message?.content?.trim() || '';
+      logAiInteraction({ userId: user.id, action: 'admin_ai_test', prompt: message, response: JSON.stringify(response) });
       return new Response(JSON.stringify({ ok: true, reply }));
     } catch (err: any) {
       return new Response(JSON.stringify({ ok: false, error: err.message || 'AI test failed' }), { status: 500 });

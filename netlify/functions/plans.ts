@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, logAiInteraction } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -43,6 +43,7 @@ export default async (req: Request) => {
       });
 
       const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
+      logAiInteraction({ userId: user.id, unitId, action: 'plan_generate', prompt, response: JSON.stringify(response) });
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId);
       if (existing) {

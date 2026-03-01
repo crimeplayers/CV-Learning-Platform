@@ -31,3 +31,13 @@ export const getAiClient = () => {
 
   return { client, model };
 };
+
+export const logAiInteraction = (params: { userId?: number; unitId?: number | string | null; action: string; prompt: string; response: string }) => {
+  const { userId = null, unitId = null, action, prompt, response } = params;
+  try {
+    db.prepare('INSERT INTO ai_logs (user_id, unit_id, action, prompt, response) VALUES (?, ?, ?, ?, ?)')
+      .run(userId, unitId, action, prompt, response);
+  } catch (err) {
+    console.error('Failed to log AI interaction', err);
+  }
+};

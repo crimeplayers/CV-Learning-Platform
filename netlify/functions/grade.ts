@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, logAiInteraction } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -40,6 +40,7 @@ export default async (req: Request) => {
         } catch (e) {
           throw new Error('AI 返回的内容不是有效的 JSON');
         }
+        logAiInteraction({ userId: user.id, unitId, action: 'grade_unit', prompt, response: JSON.stringify(response) });
         db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
         return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback }));

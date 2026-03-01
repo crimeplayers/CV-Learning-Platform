@@ -57,6 +57,16 @@ async function startServer() {
     return { client, model };
   };
 
+  const logAi = (params: { userId?: number; unitId?: number | string | null; action: string; prompt: string; response: string }) => {
+    const { userId = null, unitId = null, action, prompt, response } = params;
+    try {
+      db.prepare('INSERT INTO ai_logs (user_id, unit_id, action, prompt, response) VALUES (?, ?, ?, ?, ?)')
+        .run(userId, unitId, action, prompt, response);
+    } catch (err) {
+      console.error('Failed to log AI interaction', err);
+    }
+  };
+
   // Auth Middleware
   const authenticate = (req: any, res: any, next: any) => {
     const token = req.headers.authorization?.split(' ')[1];
@@ -141,6 +151,7 @@ async function startServer() {
         messages: [{ role: 'user', content: message }],
       });
       const reply = response.choices?.[0]?.message?.content?.trim() || '';
+      logAi({ userId: req.user.id, action: 'admin_ai_test', prompt: message, response: JSON.stringify(response) });
       res.json({ ok: true, reply });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message || 'AI test failed' });
@@ -168,6 +179,19 @@ async function startServer() {
       ORDER BY p.updated_at DESC
     `).all();
     res.json(plans);
+  });
+
+  app.get('/api/admin/ai-logs', authenticate, requireAdmin, (req: any, res: any) => {
+    const limit = Number(req.query.limit || 200);
+    const rows = db.prepare(`
+      SELECT l.*, u.username AS user_username, un.title AS unit_title
+      FROM ai_logs l
+      LEFT JOIN users u ON l.user_id = u.id
+      LEFT JOIN units un ON l.unit_id = un.id
+      ORDER BY l.created_at DESC
+      LIMIT ?
+    `).all(limit);
+    res.json(rows);
   });
 
   // Auth Routes
@@ -234,6 +258,7 @@ async function startServer() {
       });
 
       const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
+      logAi({ userId: req.user.id, unitId: unitId, action: 'plan_generate', prompt, response: JSON.stringify(response) });
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId);
       if (existing) {
@@ -277,6 +302,7 @@ async function startServer() {
         });
 
         const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
+        logAi({ userId: req.user.id, unitId, action: 'plan_adjust', prompt, response: JSON.stringify(response) });
         db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
       }
     } catch (err) {
@@ -313,6 +339,7 @@ async function startServer() {
       } catch (e) {
         throw new Error('AI 返回的内容不是有效的 JSON');
       }
+      logAi({ userId: req.user.id, unitId, action: 'grade_unit', prompt, response: JSON.stringify(response) });
       db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
       res.json({ grade: result.grade, feedback: result.feedback });
@@ -334,6 +361,7 @@ async function startServer() {
       });
 
       const answer = response.choices?.[0]?.message?.content?.trim() || '';
+      logAi({ userId: req.user.id, action: 'qa_chat', prompt, response: JSON.stringify(response) });
       res.json({ answer });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

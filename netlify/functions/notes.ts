@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, logAiInteraction } from './utils';
 import { prompts } from '../../server/prompts';
 import fs from 'fs';
 import path from 'path';
@@ -62,6 +62,7 @@ export default async (req: Request) => {
           });
 
           const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
+          logAiInteraction({ userId: user.id, unitId, action: 'plan_adjust', prompt, response: JSON.stringify(response) });
           db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
         }
       } catch (err) {
