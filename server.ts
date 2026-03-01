@@ -284,28 +284,44 @@ ${content}`);
       const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 30000);
-      let timeoutId: NodeJS.Timeout | null = null;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('AI_REQUEST_TIMEOUT')), aiTimeoutMs);
-      });
+      const maxCompletionTokens = Number(process.env.AI_PLAN_MAX_TOKENS || 1600);
 
-      const response = await Promise.race([
-        client.chat.completions.create({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 600,
-          temperature: 1,
-        }),
-        timeoutPromise
-      ]);
-      if (timeoutId) clearTimeout(timeoutId);
+      const callAiWithTimeout = async (userPrompt: string) => {
+        let timeoutId: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('AI_REQUEST_TIMEOUT')), aiTimeoutMs);
+        });
 
-      const ai_raw = response.choices?.[0]?.message?.content || '';
-      if (!ai_raw || !ai_raw.trim()) {
+        try {
+          return await Promise.race([
+            client.chat.completions.create({
+              model,
+              messages: [{ role: 'user', content: userPrompt }],
+              max_tokens: maxCompletionTokens,
+              temperature: 1,
+            }),
+            timeoutPromise
+          ]);
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      };
+
+      let response = await callAiWithTimeout(prompt);
+      let ai_raw = response.choices?.[0]?.message?.content?.trim() || '';
+
+      if (!ai_raw) {
+        const retryPrompt = `${prompt}\n\n请仅输出最终学习计划正文（中文），不要输出思考过程，不要留空。`;
+        response = await callAiWithTimeout(retryPrompt);
+        ai_raw = response.choices?.[0]?.message?.content?.trim() || '';
+      }
+
+      if (!ai_raw) {
         console.error('[plans.generate] empty ai response', JSON.stringify(response));
         throw new Error('AI 返回空响应');
       }
-      const planContent = ai_raw.trim();
+
+      const planContent = ai_raw;
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId);
       if (existing) {
