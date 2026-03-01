@@ -4,7 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import db from './server/db';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import path from 'path';
 import multer from 'multer';
 import fs from 'fs';
@@ -45,20 +45,16 @@ async function startServer() {
     const config: Record<string, string> = {};
     settings.forEach(s => config[s.key] = s.value);
 
-    const apiKey = config.ai_api_key || process.env.GEMINI_API_KEY;
+    const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
     }
-    
-    const options: any = { apiKey };
-    if (config.ai_base_url) {
-      options.baseUrl = config.ai_base_url;
-    }
-    
-    return {
-      client: new GoogleGenAI(options),
-      model: config.ai_model || 'gemini-3-flash-preview'
-    };
+
+    const baseURL = config.ai_base_url || process.env.AI_BASE_URL;
+    const client = new OpenAI({ apiKey, baseURL });
+    const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+    return { client, model };
   };
 
   // Auth Middleware
@@ -140,11 +136,12 @@ async function startServer() {
     const message = req.body?.message || '这是一次AI可用性测试，请简短回应。';
     try {
       const { client, model } = getAiClient();
-      const response = await client.models.generateContent({
+      const response = await client.chat.completions.create({
         model,
-        contents: message,
+        messages: [{ role: 'user', content: message }],
       });
-      res.json({ ok: true, reply: response.text || '' });
+      const reply = response.choices?.[0]?.message?.content?.trim() || '';
+      res.json({ ok: true, reply });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message || 'AI test failed' });
     }
@@ -231,12 +228,12 @@ async function startServer() {
 
       const prompt = prompts.generatePlan(unit, resourcesText);
 
-      const response = await client.models.generateContent({
-        model: model,
-        contents: prompt,
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      const planContent = response.text || '无法生成计划';
+      const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId);
       if (existing) {
@@ -274,12 +271,12 @@ async function startServer() {
         const { client, model } = getAiClient();
         const prompt = prompts.adjustPlan(unit, plan, content, fileUrl);
 
-        const response = await client.models.generateContent({
-          model: model,
-          contents: prompt,
+        const response = await client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }],
         });
 
-        const newPlanContent = response.text || plan.plan_content;
+        const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
         db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
       }
     } catch (err) {
@@ -304,13 +301,18 @@ async function startServer() {
       const { client, model } = getAiClient();
       const prompt = prompts.gradeUnit(unit, plan, latestNote);
 
-      const response = await client.models.generateContent({
-        model: model,
-        contents: prompt,
-        config: { responseMimeType: 'application/json' }
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      const result = JSON.parse(response.text || '{}');
+      const raw = response.choices?.[0]?.message?.content || '';
+      let result: any;
+      try {
+        result = JSON.parse(raw);
+      } catch (e) {
+        throw new Error('AI 返回的内容不是有效的 JSON');
+      }
       db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
       res.json({ grade: result.grade, feedback: result.feedback });
@@ -326,12 +328,13 @@ async function startServer() {
       const { client, model } = getAiClient();
       const prompt = prompts.qaAssistant(context, question);
 
-      const response = await client.models.generateContent({
-        model: model,
-        contents: prompt,
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      res.json({ answer: response.text });
+      const answer = response.choices?.[0]?.message?.content?.trim() || '';
+      res.json({ answer });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

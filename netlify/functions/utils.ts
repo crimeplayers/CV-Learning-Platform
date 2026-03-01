@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import db from './db';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
@@ -20,18 +20,14 @@ export const getAiClient = () => {
   const config: Record<string, string> = {};
   settings.forEach(s => config[s.key] = s.value);
 
-  const apiKey = config.ai_api_key || process.env.GEMINI_API_KEY;
+  const apiKey = config.ai_api_key || process.env.AI_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
   }
   
-  const options: any = { apiKey };
-  if (config.ai_base_url) {
-    options.baseUrl = config.ai_base_url;
-  }
-  
-  return {
-    client: new GoogleGenAI(options),
-    model: config.ai_model || 'gemini-3-flash-preview'
-  };
+  const baseURL = config.ai_base_url || process.env.AI_BASE_URL;
+  const client = new OpenAI({ apiKey, baseURL });
+  const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+  return { client, model };
 };

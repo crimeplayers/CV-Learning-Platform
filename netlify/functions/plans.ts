@@ -37,12 +37,12 @@ export default async (req: Request) => {
 
       const prompt = prompts.generatePlan(unit, resourcesText);
 
-      const response = await client.models.generateContent({
-        model: model,
-        contents: prompt,
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      const planContent = response.text || '无法生成计划';
+      const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId);
       if (existing) {

@@ -56,12 +56,12 @@ export default async (req: Request) => {
           const { client, model } = getAiClient();
           const prompt = prompts.adjustPlan(unit, plan, content, fileUrl);
 
-          const response = await client.models.generateContent({
-            model: model,
-            contents: prompt,
+          const response = await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: prompt }],
           });
 
-          const newPlanContent = response.text || plan.plan_content;
+          const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
           db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
         }
       } catch (err) {

@@ -28,13 +28,18 @@ export default async (req: Request) => {
         const { client, model } = getAiClient();
         const prompt = prompts.gradeUnit(unit, plan, latestNote);
 
-        const response = await client.models.generateContent({
-          model: model,
-          contents: prompt,
-          config: { responseMimeType: 'application/json' }
+        const response = await client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }],
         });
 
-        const result = JSON.parse(response.text || '{}');
+        const raw = response.choices?.[0]?.message?.content || '';
+        let result: any;
+        try {
+          result = JSON.parse(raw);
+        } catch (e) {
+          throw new Error('AI 返回的内容不是有效的 JSON');
+        }
         db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
         return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback }));

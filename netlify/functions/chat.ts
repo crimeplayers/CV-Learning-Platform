@@ -16,12 +16,13 @@ export default async (req: Request) => {
       const { client, model } = getAiClient();
       const prompt = prompts.qaAssistant(context, question);
 
-      const response = await client.models.generateContent({
-        model: model,
-        contents: prompt,
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      return new Response(JSON.stringify({ answer: response.text }));
+      const answer = response.choices?.[0]?.message?.content?.trim() || '';
+      return new Response(JSON.stringify({ answer }));
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }

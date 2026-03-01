@@ -77,8 +77,12 @@ export default async (req: Request) => {
     try {
       const { message = '这是一次AI可用性测试，请简短回应。' } = await req.json();
       const { client, model } = getAiClient();
-      const response = await client.models.generateContent({ model, contents: message });
-      return new Response(JSON.stringify({ ok: true, reply: response.text || '' }));
+      const response = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: message }],
+      });
+      const reply = response.choices?.[0]?.message?.content?.trim() || '';
+      return new Response(JSON.stringify({ ok: true, reply }));
     } catch (err: any) {
       return new Response(JSON.stringify({ ok: false, error: err.message || 'AI test failed' }), { status: 500 });
     }
