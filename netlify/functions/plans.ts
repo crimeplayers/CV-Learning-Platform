@@ -47,14 +47,18 @@ export default async (req: Request) => {
       const controller = new AbortController();
       const abortTimer = setTimeout(() => controller.abort(), aiTimeoutMs);
 
-      const response = await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 600, // keep generations concise to avoid timeouts
-        temperature: 0.7,
-        timeout: aiTimeoutMs,
-        signal: controller.signal,
-      }).finally(() => clearTimeout(abortTimer));
+      const response = await client.chat.completions.create(
+        {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 600, // keep generations concise to avoid timeouts
+          temperature: 0.7,
+        },
+        {
+          signal: controller.signal,
+          timeout: aiTimeoutMs,
+        }
+      ).finally(() => clearTimeout(abortTimer));
 
       const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
       
@@ -71,7 +75,7 @@ export default async (req: Request) => {
     } catch (err: any) {
       const isAbort = err?.name === 'AbortError';
       const status = isAbort ? 504 : 500;
-      const message = isAbort ? 'AI generation timed out. Try again with shorter input.' : err.message;
+      const message = isAbort ? 'AI generation timed out. Try again with shorter input.' : err?.message || 'Unknown error';
       return new Response(JSON.stringify({ error: message }), { status });
     }
   }
