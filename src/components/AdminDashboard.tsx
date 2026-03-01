@@ -321,7 +321,7 @@ function AdminRecords() {
 
 function AISettings() {
   const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-  const [settings, setSettings] = useState({ ai_api_key: '', ai_base_url: '', ai_model: 'gemini-3-flash-preview' });
+  const [settings, setSettings] = useState({ ai_api_key: '', ai_base_url: '', ai_model: '' });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [testing, setTesting] = useState(false);
@@ -396,7 +396,7 @@ function AISettings() {
             type="password" 
             value={settings.ai_api_key} 
             onChange={e => setSettings({...settings, ai_api_key: e.target.value})} 
-            placeholder="留空则使用环境变量中的 GEMINI_API_KEY"
+            placeholder="留空则使用环境变量中的 KEY"
             className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none transition" 
           />
         </div>
