@@ -12,7 +12,12 @@ export default function Login() {
     e.preventDefault();
     setError('');
     try {
-      const res = await fetch('/api/auth/login', {
+      // 🌟 核心修改：动态获取后端 API 地址
+      // 如果环境变量存在，就使用环境变量；如果不存在（比如本地开发），就默认空字符串（相对路径）
+      const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+      
+      // 🌟 核心修改：拼接完整的请求地址
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
