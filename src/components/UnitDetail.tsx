@@ -42,10 +42,25 @@ export default function UnitDetail() {
     setLoadingPlan(true);
     const token = localStorage.getItem('token');
     try {
+      const resourcesText = resources.length > 0
+        ? resources.map((r: any) => `- ${r.title}: ${r.url || ''} ${r.description || ''}`).join('\n')
+        : '无';
+
+      const prompt = `为学生制定本周学习计划。
+单元名称：${unit.title}
+学习时间：第${unit.week_range}周
+单元描述：${unit.description}
+学习目标：${unit.objectives}
+相关学习资源：
+${resourcesText}
+FILES: /data/admin/计算机视觉基础大纲.md, /data/admin/计算机视觉基础辅修说明.pdf
+
+请根据上述内容，为学生制定一份详细的每周学习计划，帮助他们完成学习目标，并合理安排学习资源的使用。请直接返回计划内容，不要包含多余的废话。`;
+
       const res = await fetch(`${API_BASE_URL}/api/plans/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ unitId: id }),
+        body: JSON.stringify({ unitId: id, prompt }),
       });
       const data = await res.json();
       setPlan({ plan_content: data.plan_content });

@@ -26,21 +26,24 @@ export default async (req: Request) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/plans/generate') {
-    const { unitId } = await req.json();
+    const { unitId, prompt: clientPrompt } = await req.json();
     const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(unitId) as any;
     if (!unit) return new Response(JSON.stringify({ error: 'Unit not found' }), { status: 404 });
 
     try {
       const { client, model } = getAiClient();
-      let resourcesText = '无';
-      try {
-        const resources = JSON.parse(unit.resources || '[]');
-        if (resources.length > 0) {
-          resourcesText = resources.map((r: any) => `- ${r.title}: ${r.url || ''} ${r.description || ''}`).join('\n');
-        }
-      } catch (e) {}
+      let basePrompt = clientPrompt as string | undefined;
+      if (!basePrompt) {
+        let resourcesText = '无';
+        try {
+          const resources = JSON.parse(unit.resources || '[]');
+          if (resources.length > 0) {
+            resourcesText = resources.map((r: any) => `- ${r.title}: ${r.url || ''} ${r.description || ''}`).join('\n');
+          }
+        } catch (e) {}
 
-      const basePrompt = prompts.generatePlan(unit, resourcesText);
+        basePrompt = prompts.generatePlan(unit, resourcesText);
+      }
       const { prompt, files } = buildPromptWithFiles(basePrompt);
 
       const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 45000);
