@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import path from 'path';
 
-const dbPath = process.env.DB_PATH || path.resolve(process.cwd(), 'database.sqlite');
+// In Netlify functions, the working directory is usually the function directory or project root.
+const dbPath = path.resolve(process.cwd(), 'database.sqlite');
 const db = new Database(dbPath);
 
 // Initialize tables
@@ -129,35 +130,6 @@ if (unitsCount.count === 0) {
     }
   });
   insertMany(units);
-} else {
-  // Update unit 1 and 2 if they exist but don't have resources set yet
-  const unit1 = db.prepare('SELECT resources FROM units WHERE id = 1').get() as any;
-  if (unit1 && (!unit1.resources || unit1.resources === '[]')) {
-    db.prepare('UPDATE units SET objectives = ?, resources = ? WHERE id = 1').run(
-      '掌握如何搭建最基础的PyTorch编程实验环境，并回顾机器学习的基础知识。',
-      JSON.stringify([
-        { title: 'Anaconda下载与安装', url: 'http://t.csdnimg.cn/1WEsj' },
-        { title: 'PyTorch GPU版本安装参考', url: 'https://blog.csdn.net/Little_Carter/article/details/135934842' },
-        { title: 'Python数值计算与数据处理', url: 'https://zh.d2l.ai/chapter_preliminaries/index.html' },
-        { title: '线性回归视频', url: 'https://www.bilibili.com/video/BV1PX4y1g7KC/?spm_id_from=333.788.recommend_more_video.2' },
-        { title: '线性回归讲义', url: 'https://zh.d2l.ai/chapter_linear-networks/linear-regression.html' },
-        { title: 'Softmax视频', url: 'https://www.bilibili.com/video/BV1K64y1Q7wu/?spm_id_from=333.788.recommend_more_video.0' },
-        { title: 'Softmax编程实现视频', url: 'https://www.bilibili.com/video/BV1K64y1Q7wu/?p=5' },
-        { title: 'Softmax编程实现讲义', url: 'https://zh.d2l.ai/chapter_linear-networks/softmax-regression-concise.html' }
-      ])
-    );
-  }
-  const unit2 = db.prepare('SELECT resources FROM units WHERE id = 2').get() as any;
-  if (unit2 && (!unit2.resources || unit2.resources === '[]')) {
-    db.prepare('UPDATE units SET objectives = ?, resources = ? WHERE id = 2').run(
-      '通过编程实践，了解基础的图像处理操作以及如何使用图像处理技术实现视觉数据的有效增广，为复杂视觉模型的高效训练提供基础。',
-      JSON.stringify([
-        { title: '常见的图像处理操作', url: '', description: '参考教材《Programming-Computer-VisionPython计算机视觉编程》第一章，学习如何使用NumPy、Matplotlib等常用的Python工具包实现基础的图像处理操作，阅读并运行教材中的例程。' },
-        { title: '数据增广简介视频', url: 'https://www.bilibili.com/video/BV17y4y1g76q/' },
-        { title: '数据增广编程实现', url: 'https://zh.d2l.ai/chapter_computer-vision/image-augmentation.html' }
-      ])
-    );
-  }
 }
 
 export default db;
