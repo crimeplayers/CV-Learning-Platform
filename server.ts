@@ -50,8 +50,8 @@ async function startServer() {
       throw new Error('API Key is missing. Please configure it in Admin Settings or environment variables.');
     }
 
-    const baseURL = config.ai_base_url || process.env.AI_BASE_URL;
-    const client = new OpenAI({ apiKey, baseURL });
+    const baseURL = config.ai_base_url || process.env.AI_BASE_URL || 'https://api.gptsapi.net/v1';
+    const client = new OpenAI({ apiKey, baseURL, timeout: 30000, maxRetries: 2 });
     const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
 
     return { client, model };
