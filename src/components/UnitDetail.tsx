@@ -1,8 +1,7 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, CheckCircle, Clock, BookOpen, MessageSquare, Send, Paperclip, Link as LinkIcon } from 'lucide-react';
 import SidebarAI from './SidebarAI';
-import { marked } from 'marked';
 
 export default function UnitDetail() {
   const { id } = useParams();
@@ -18,7 +17,6 @@ export default function UnitDetail() {
   const [grading, setGrading] = useState(false);
   const [gradeResult, setGradeResult] = useState<any>(null);
   const [submittingNote, setSubmittingNote] = useState(false);
-  const renderedPlan = useMemo(() => marked.parse(plan?.plan_content || ''), [plan?.plan_content]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -207,10 +205,9 @@ export default function UnitDetail() {
           </div>
           
           {plan ? (
-            <div
-              className="prose prose-indigo max-w-none text-slate-700"
-              dangerouslySetInnerHTML={{ __html: renderedPlan as any }}
-            />
+            <pre className="whitespace-pre-wrap text-slate-800 bg-slate-50 border border-slate-200 rounded-lg p-4">
+              {plan.plan_content}
+            </pre>
           ) : (
             <div className="text-center py-8 text-slate-500">
               暂无学习计划，点击右上角按钮生成。

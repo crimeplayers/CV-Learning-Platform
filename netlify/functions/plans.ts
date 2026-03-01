@@ -43,12 +43,18 @@ export default async (req: Request) => {
       const basePrompt = prompts.generatePlan(unit, resourcesText);
       const { prompt, files } = buildPromptWithFiles(basePrompt);
 
+      const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 45000);
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), aiTimeoutMs);
+
       const response = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 800, // keep generations concise to avoid timeouts
+        max_tokens: 600, // keep generations concise to avoid timeouts
         temperature: 0.7,
-      });
+        timeout: aiTimeoutMs,
+        signal: controller.signal,
+      }).finally(() => clearTimeout(abortTimer));
 
       const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
       
@@ -63,7 +69,10 @@ export default async (req: Request) => {
       const saved = savePlanFile(user.id, Number(unitId), planContent);
       return new Response(JSON.stringify({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw, plan_file: saved, plan_version: null }));
     } catch (err: any) {
-      return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+      const isAbort = err?.name === 'AbortError';
+      const status = isAbort ? 504 : 500;
+      const message = isAbort ? 'AI generation timed out. Try again with shorter input.' : err.message;
+      return new Response(JSON.stringify({ error: message }), { status });
     }
   }
 
