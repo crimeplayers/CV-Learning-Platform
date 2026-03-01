@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import db from './server/db';
 import bcrypt from 'bcryptjs';
@@ -32,6 +33,8 @@ const upload = multer({ storage: storage });
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3000;
+
+  app.use(cors()); // <--- 新增这一行
 
   app.use(express.json());
   app.use('/uploads', express.static(uploadsDir));
