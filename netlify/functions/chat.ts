@@ -1,5 +1,5 @@
 import { Config } from "@netlify/functions";
-import { authenticate, getAiClient, logAiInteraction } from './utils';
+import { authenticate, getAiClient, logAiInteraction, enrichPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -17,13 +17,14 @@ export default async (req: Request) => {
       const { client, model } = getAiClient();
       const prompt = prompts.qaAssistant(context, question);
 
+      const enriched = enrichPromptWithFiles(prompt);
       const response = await client.chat.completions.create({
         model,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: enriched.prompt }],
       });
 
       const answer = response.choices?.[0]?.message?.content?.trim() || '';
-      logAiInteraction({ userId: user?.id, action: 'qa_chat', prompt, response: JSON.stringify(response) });
+      logAiInteraction({ userId: user?.id, action: 'qa_chat', prompt: enriched.prompt, response: JSON.stringify(response) });
       return new Response(JSON.stringify({ answer }));
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });

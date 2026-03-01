@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient, logAiInteraction } from './utils';
+import { authenticate, getAiClient, logAiInteraction, enrichPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 
 export default async (req: Request) => {
@@ -28,9 +28,10 @@ export default async (req: Request) => {
         const { client, model } = getAiClient();
         const prompt = prompts.gradeUnit(unit, plan, latestNote);
 
+        const enriched = enrichPromptWithFiles(prompt);
         const response = await client.chat.completions.create({
           model,
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: 'user', content: enriched.prompt }],
         });
 
         const raw = response.choices?.[0]?.message?.content || '';
@@ -40,7 +41,7 @@ export default async (req: Request) => {
         } catch (e) {
           throw new Error('AI 返回的内容不是有效的 JSON');
         }
-        logAiInteraction({ userId: user.id, unitId, action: 'grade_unit', prompt, response: JSON.stringify(response) });
+        logAiInteraction({ userId: user.id, unitId, action: 'grade_unit', prompt: enriched.prompt, response: JSON.stringify(response) });
         db.prepare('UPDATE notes SET grade = ?, feedback = ? WHERE id = ?').run(result.grade, result.feedback, latestNote.id);
 
         return new Response(JSON.stringify({ grade: result.grade, feedback: result.feedback }));

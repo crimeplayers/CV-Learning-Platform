@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 import OpenAI from 'openai';
 import db from './db';
+import fs from 'fs';
+import path from 'path';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 
@@ -30,6 +32,42 @@ export const getAiClient = () => {
   const model = config.ai_model || process.env.AI_MODEL || 'gpt-4o-mini';
 
   return { client, model };
+};
+
+const DATA_ROOT = process.env.DATA_ROOT || '/data';
+
+export const enrichPromptWithFiles = (prompt: string) => {
+  const match = prompt.match(/files\s*:\s*(\[[^\]]+\])/i);
+  if (!match) return { prompt, files: [] as string[] };
+
+  let files: string[] = [];
+  try {
+    files = JSON.parse(match[1]);
+    if (!Array.isArray(files)) files = [];
+  } catch (e) {
+    files = [];
+  }
+
+  const readable: { path: string; content: string }[] = [];
+  for (const f of files) {
+    if (typeof f !== 'string') continue;
+    const absPath = path.resolve(f);
+    if (!absPath.startsWith(path.resolve(DATA_ROOT))) continue;
+    if (!fs.existsSync(absPath)) continue;
+    try {
+      const content = fs.readFileSync(absPath, 'utf8');
+      const truncated = content.length > 20000 ? content.slice(0, 20000) + '\n...[truncated]' : content;
+      readable.push({ path: absPath, content: truncated });
+    } catch (e) {
+      continue;
+    }
+  }
+
+  if (readable.length === 0) return { prompt, files };
+
+  const append = readable.map(r => `---\n路径: ${r.path}\n内容:\n${r.content}`).join('\n\n');
+  const finalPrompt = `${prompt}\n\n[附加文件内容]\n${append}`;
+  return { prompt: finalPrompt, files };
 };
 
 export const logAiInteraction = (params: { userId?: number; unitId?: number | string | null; action: string; prompt: string; response: string }) => {
