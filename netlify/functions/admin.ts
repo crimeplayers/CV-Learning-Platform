@@ -1,7 +1,7 @@
 import { Config } from "@netlify/functions";
 import db from './db';
 import bcrypt from 'bcryptjs';
-import { authenticate } from './utils';
+import { authenticate, getAiClient } from './utils';
 
 export default async (req: Request) => {
   const url = new URL(req.url);
@@ -70,6 +70,17 @@ export default async (req: Request) => {
       });
       updateMany(settings);
       return new Response(JSON.stringify({ success: true }));
+    }
+  }
+
+  if (url.pathname === '/api/admin/ai/test' && req.method === 'POST') {
+    try {
+      const { message = '这是一次AI可用性测试，请简短回应。' } = await req.json();
+      const { client, model } = getAiClient();
+      const response = await client.models.generateContent({ model, contents: message });
+      return new Response(JSON.stringify({ ok: true, reply: response.text || '' }));
+    } catch (err: any) {
+      return new Response(JSON.stringify({ ok: false, error: err.message || 'AI test failed' }), { status: 500 });
     }
   }
 

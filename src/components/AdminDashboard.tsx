@@ -324,6 +324,9 @@ function AISettings() {
   const [settings, setSettings] = useState({ ai_api_key: '', ai_base_url: '', ai_model: 'gemini-3-flash-preview' });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState('你好，这是测试消息');
+  const [testResult, setTestResult] = useState('');
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/admin/settings`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -355,6 +358,27 @@ function AISettings() {
       setMessage('保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/ai/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ message: testMessage })
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || '测试失败');
+      }
+      setTestResult(data.reply || 'AI 已响应，但无返回文本');
+    } catch (err: any) {
+      setTestResult(`错误: ${err.message}`);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -399,15 +423,38 @@ function AISettings() {
           />
         </div>
 
-        <div className="pt-4 flex items-center">
-          <button 
-            onClick={handleSave} 
-            disabled={saving}
-            className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 flex items-center disabled:opacity-50 transition"
-          >
-            <Save className="w-4 h-4 mr-2" /> {saving ? '保存中...' : '保存配置'}
-          </button>
-          {message && <span className="ml-4 text-emerald-600 text-sm font-medium">{message}</span>}
+        <div className="pt-4 flex flex-col gap-3">
+          <div className="flex items-center">
+            <button 
+              onClick={handleSave} 
+              disabled={saving}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 flex items-center disabled:opacity-50 transition"
+            >
+              <Save className="w-4 h-4 mr-2" /> {saving ? '保存中...' : '保存配置'}
+            </button>
+            {message && <span className="ml-4 text-emerald-600 text-sm font-medium">{message}</span>}
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="text"
+              value={testMessage}
+              onChange={(e) => setTestMessage(e.target.value)}
+              className="w-64 border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="测试消息"
+            />
+            <button
+              onClick={handleTest}
+              disabled={testing}
+              className="bg-slate-100 text-slate-800 px-4 py-2 rounded-lg hover:bg-slate-200 transition disabled:opacity-50"
+            >
+              {testing ? '测试中...' : '发送测试消息'}
+            </button>
+          </div>
+          {testResult && (
+            <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap">
+              {testResult}
+            </div>
+          )}
         </div>
       </div>
     </div>

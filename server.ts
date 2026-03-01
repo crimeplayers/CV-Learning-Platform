@@ -135,6 +135,21 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Admin AI connectivity test
+  app.post('/api/admin/ai/test', authenticate, requireAdmin, async (req: any, res: any) => {
+    const message = req.body?.message || '这是一次AI可用性测试，请简短回应。';
+    try {
+      const { client, model } = getAiClient();
+      const response = await client.models.generateContent({
+        model,
+        contents: message,
+      });
+      res.json({ ok: true, reply: response.text || '' });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message || 'AI test failed' });
+    }
+  });
+
   // Admin Records API
   app.get('/api/admin/notes', authenticate, requireAdmin, (req: any, res: any) => {
     const notes = db.prepare(`
