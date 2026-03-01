@@ -67,7 +67,12 @@ export default async (req: Request) => {
       const response = await Promise.race([aiCall, timeoutPromise]);
       if (timeoutId) clearTimeout(timeoutId);
 
-      const planContent = response.choices?.[0]?.message?.content?.trim() || '无法生成计划';
+      const ai_raw = response.choices?.[0]?.message?.content || '';
+      if (!ai_raw || !ai_raw.trim()) {
+        console.error('[plans.generate] empty ai response', JSON.stringify(response));
+        throw new Error('AI 返回空响应');
+      }
+      const planContent = ai_raw.trim();
       
       const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId);
       if (existing) {
@@ -76,7 +81,6 @@ export default async (req: Request) => {
         db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content) VALUES (?, ?, ?)').run(user.id, unitId, planContent);
       }
 
-      const ai_raw = response.choices?.[0]?.message?.content || '';
       const saved = savePlanFile(user.id, Number(unitId), planContent);
       const elapsed_ms = Date.now() - startedAt;
       console.log('[plans.generate] elapsed_ms=%d unitId=%s user=%s', elapsed_ms, unitId, user.id);
