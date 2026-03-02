@@ -40,7 +40,7 @@ ${pretestAnswer || '（未提供答案）'}
 ${resourcesText}
 FILES: /data/admin/unit_plan/unit${unit.id}/${unit.id}. ${unit.title}.pdf, /data/admin/unit_plan/unit${unit.id}/计算机视觉大纲_${unit.id}.md
 相关学习资源中，md文档为当前主计划大纲中的本单元任务，pdf文件为参考变量
-当前已提供：当前主计划大纲中的本单元任务与参考计划`,
+当前已提供：当前主计划大纲中的本单元任务以及参考计划`,
 
 
   // 2. AI根据笔记重新调整学习计划提示词
