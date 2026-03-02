@@ -40,6 +40,8 @@ db.exec(`
     student_id INTEGER NOT NULL,
     unit_id INTEGER NOT NULL,
     plan_content TEXT NOT NULL,
+    generate_count INTEGER NOT NULL DEFAULT 0,
+    adjust_count INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(student_id) REFERENCES users(id),
@@ -74,6 +76,16 @@ try {
 }
 try {
   db.exec("ALTER TABLE notes ADD COLUMN file_url TEXT");
+} catch (e) {
+  // Column might already exist
+}
+try {
+  db.exec("ALTER TABLE study_plans ADD COLUMN generate_count INTEGER NOT NULL DEFAULT 0");
+} catch (e) {
+  // Column might already exist
+}
+try {
+  db.exec("ALTER TABLE study_plans ADD COLUMN adjust_count INTEGER NOT NULL DEFAULT 0");
 } catch (e) {
   // Column might already exist
 }

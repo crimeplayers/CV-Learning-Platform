@@ -7,6 +7,7 @@ import path from 'path';
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const NOTES_DIR = path.join(DATA_DIR, 'notes');
+const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
 if (!fs.existsSync(NOTES_DIR)) {
   fs.mkdirSync(NOTES_DIR, { recursive: true });
 }
@@ -60,49 +61,71 @@ export default async (req: Request) => {
       const result = db.prepare('INSERT INTO notes (student_id, unit_id, week, content, file_url) VALUES (?, ?, ?, ?, ?)').run(user.id, unitId, week, content || '', fileUrl);
       const noteId = result.lastInsertRowid;
 
+      let adjustApplied = false;
+      let adjustSkippedReason = '';
+      let adjustCount = 0;
+
       // Adjust plan
       try {
         const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
         if (plan) {
-          const { client, model } = getAiClient();
-          const now = new Date();
-          const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
-          const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
-          const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
-          const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
-          const progressContext = [
-            `当前时间: ${now.toISOString()}`,
-            `本次笔记提交序号: 第${noteVersion}次`,
-            `本次笔记提交周次字段: ${week || '未知'}`,
-            `原计划创建时间: ${plan.created_at || '未知'}`,
-            `原计划上次更新时间: ${plan.updated_at || '未知'}`,
-            `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
-            `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
-            `单元周次范围: 第${unit.week_range}周`
-          ].join('\n');
+          adjustCount = Number(plan.adjust_count || 0);
+          if (adjustCount >= MAX_PLAN_ADJUSTMENTS) {
+            adjustSkippedReason = `根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
+          } else {
+            const { client, model } = getAiClient();
+            const now = new Date();
+            const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
+            const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
+            const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
+            const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
+            const progressContext = [
+              `当前时间: ${now.toISOString()}`,
+              `本次笔记提交序号: 第${noteVersion}次`,
+              `本次笔记提交周次字段: ${week || '未知'}`,
+              `原计划创建时间: ${plan.created_at || '未知'}`,
+              `原计划上次更新时间: ${plan.updated_at || '未知'}`,
+              `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
+              `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
+              `单元周次范围: 第${unit.week_range}周`
+            ].join('\n');
 
-          const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
-          const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
-            ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
-            : fileUrl && String(fileUrl).startsWith('/uploads/')
-              ? path.join(process.env.UPLOADS_DIR || path.join(DATA_DIR, 'uploads'), path.basename(String(fileUrl)))
-              : null;
-          const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
-          const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
+            const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+            const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
+              ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
+              : fileUrl && String(fileUrl).startsWith('/uploads/')
+                ? path.join(process.env.UPLOADS_DIR || path.join(DATA_DIR, 'uploads'), path.basename(String(fileUrl)))
+                : null;
+            const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
+            const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 
-          const response = await client.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: adjustPrompt }],
-          });
+            const response = await client.chat.completions.create({
+              model,
+              messages: [{ role: 'user', content: adjustPrompt }],
+            });
 
-          const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
-          db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+            const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
+            db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+            adjustApplied = true;
+            adjustCount += 1;
+          }
+        } else {
+          adjustSkippedReason = '当前单元尚未生成学习计划，已仅保存笔记';
         }
       } catch (err) {
         console.error('Failed to adjust plan', err);
+        adjustSkippedReason = '计划调整失败，已仅保存笔记';
       }
 
-      return new Response(JSON.stringify({ id: noteId, message: 'Note saved and plan adjusted' }));
+      return new Response(JSON.stringify({
+        id: noteId,
+        message: adjustApplied ? 'Note saved and plan adjusted' : 'Note saved',
+        plan_adjusted: adjustApplied,
+        adjust_skipped_reason: adjustSkippedReason,
+        adjust_count: adjustCount,
+        max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+        remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+      }));
     } catch (err: any) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }

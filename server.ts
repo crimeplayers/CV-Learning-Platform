@@ -15,6 +15,8 @@ const DATA_DIR = process.env.DATA_DIR || '/data';
 const PLAN_DIR = path.join(DATA_DIR, 'plan');
 const NOTES_DIR = path.join(DATA_DIR, 'notes');
 const MAX_FILE_PREVIEW = 8000;
+const MAX_PLAN_GENERATIONS = Math.max(0, Number(process.env.MAX_PLAN_GENERATIONS || 3));
+const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
 
 // Ensure uploads directory exists
 const uploadsDir = process.env.UPLOADS_DIR || path.join(DATA_DIR, 'uploads');
@@ -395,8 +397,22 @@ async function startServer() {
 
   // Study Plans
   app.get('/api/plans/:unitId', authenticate, (req: any, res: any) => {
-    const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, req.params.unitId);
-    res.json(plan || null);
+    const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, req.params.unitId) as any;
+    if (!plan) {
+      return res.json(null);
+    }
+
+    const generateCount = Number(plan.generate_count || 0);
+    const adjustCount = Number(plan.adjust_count || 0);
+    res.json({
+      ...plan,
+      generate_count: generateCount,
+      adjust_count: adjustCount,
+      max_generate_count: MAX_PLAN_GENERATIONS,
+      max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+      remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
+      remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+    });
   });
 
   app.post('/api/plans/generate', authenticate, async (req: any, res: any) => {
@@ -461,17 +477,45 @@ async function startServer() {
 
       const planContent = ai_raw;
       
-      const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId);
-      if (existing) {
-        db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE student_id = ? AND unit_id = ?').run(planContent, req.user.id, unitId);
-      } else {
-        db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content) VALUES (?, ?, ?)').run(req.user.id, unitId, planContent);
+      const existing = db.prepare('SELECT id, generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
+      const currentGenerateCount = Number(existing?.generate_count || 0);
+      if (currentGenerateCount >= MAX_PLAN_GENERATIONS) {
+        return res.status(429).json({
+          error: `学习计划最多可生成 ${MAX_PLAN_GENERATIONS} 次，当前次数已用完。`,
+          max_generate_count: MAX_PLAN_GENERATIONS,
+          generate_count: currentGenerateCount,
+          remaining_generate_count: 0
+        });
       }
+
+      if (existing) {
+        db.prepare('UPDATE study_plans SET plan_content = ?, generate_count = COALESCE(generate_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE student_id = ? AND unit_id = ?').run(planContent, req.user.id, unitId);
+      } else {
+        db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content, generate_count, adjust_count) VALUES (?, ?, ?, ?, ?)').run(req.user.id, unitId, planContent, 1, 0);
+      }
+
+      const refreshed = db.prepare('SELECT generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
+      const generateCount = Number(refreshed?.generate_count || 0);
+      const adjustCount = Number(refreshed?.adjust_count || 0);
 
       const saved = savePlanFile(req.user.id, Number(unitId), planContent);
       const elapsed_ms = Date.now() - startedAt;
       console.log('[plans.generate] elapsed_ms=%d unitId=%s user=%s', elapsed_ms, unitId, req.user?.id);
-      res.json({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw, plan_file: saved?.filepath, plan_version: saved?.version, elapsed_ms });
+      res.json({
+        plan_content: planContent,
+        prompt_preview: prompt,
+        files_used: files,
+        ai_raw,
+        plan_file: saved?.filepath,
+        plan_version: saved?.version,
+        elapsed_ms,
+        generate_count: generateCount,
+        adjust_count: adjustCount,
+        max_generate_count: MAX_PLAN_GENERATIONS,
+        max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+        remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
+        remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+      });
     } catch (err: any) {
       const isTimeout = err?.message === 'AI_REQUEST_TIMEOUT';
       const status = isTimeout ? 504 : 500;
@@ -515,51 +559,73 @@ async function startServer() {
     const result = db.prepare('INSERT INTO notes (student_id, unit_id, week, content, file_url) VALUES (?, ?, ?, ?, ?)').run(req.user.id, unitId, week, content || '', fileUrl);
     const noteId = result.lastInsertRowid;
 
+    let adjustApplied = false;
+    let adjustSkippedReason = '';
+    let adjustCount = 0;
+
     // Adjust plan
     try {
       const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
       if (plan) {
-        const { client, model } = getAiClient();
-        const now = new Date();
-        const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
-        const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
-        const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
-        const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
-        const progressContext = [
-          `当前时间: ${now.toISOString()}`,
-          `本次笔记提交序号: 第${noteVersion}次`,
-          `本次笔记提交周次字段: ${week || '未知'}`,
-          `原计划创建时间: ${plan.created_at || '未知'}`,
-          `原计划上次更新时间: ${plan.updated_at || '未知'}`,
-          `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
-          `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
-          `单元周次范围: 第${unit.week_range}周`
-        ].join('\n');
+        adjustCount = Number(plan.adjust_count || 0);
+        if (adjustCount >= MAX_PLAN_ADJUSTMENTS) {
+          adjustSkippedReason = `根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
+        } else {
+          const { client, model } = getAiClient();
+          const now = new Date();
+          const planCreatedAt = plan.created_at ? new Date(plan.created_at) : null;
+          const planUpdatedAt = plan.updated_at ? new Date(plan.updated_at) : null;
+          const hoursSinceCreated = planCreatedAt ? Math.max(0, Math.floor((now.getTime() - planCreatedAt.getTime()) / 3600000)) : null;
+          const hoursSinceUpdated = planUpdatedAt ? Math.max(0, Math.floor((now.getTime() - planUpdatedAt.getTime()) / 3600000)) : null;
+          const progressContext = [
+            `当前时间: ${now.toISOString()}`,
+            `本次笔记提交序号: 第${noteVersion}次`,
+            `本次笔记提交周次字段: ${week || '未知'}`,
+            `原计划创建时间: ${plan.created_at || '未知'}`,
+            `原计划上次更新时间: ${plan.updated_at || '未知'}`,
+            `距原计划创建已过小时: ${hoursSinceCreated ?? '未知'}`,
+            `距原计划上次更新已过小时: ${hoursSinceUpdated ?? '未知'}`,
+            `单元周次范围: 第${unit.week_range}周`
+          ].join('\n');
 
-        const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
-        const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
-          ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
-          : fileUrl && String(fileUrl).startsWith('/uploads/')
-            ? path.join(uploadsDir, path.basename(String(fileUrl)))
-            : null;
-        const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
-        const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
+          const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+          const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
+            ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
+            : fileUrl && String(fileUrl).startsWith('/uploads/')
+              ? path.join(uploadsDir, path.basename(String(fileUrl)))
+              : null;
+          const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
+          const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 
-        const response = await client.chat.completions.create({
-          model,
-          messages: [{ role: 'user', content: adjustPrompt }],
-        });
+          const response = await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: adjustPrompt }],
+          });
 
-        const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
-        db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+          const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
+          db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
 
-        savePlanFile(req.user.id, Number(unitId), newPlanContent);
+          savePlanFile(req.user.id, Number(unitId), newPlanContent);
+          adjustApplied = true;
+          adjustCount += 1;
+        }
+      } else {
+        adjustSkippedReason = '当前单元尚未生成学习计划，已仅保存笔记';
       }
     } catch (err) {
       console.error('Failed to adjust plan', err);
+      adjustSkippedReason = '计划调整失败，已仅保存笔记';
     }
 
-    res.json({ id: noteId, message: 'Note saved and plan adjusted' });
+    res.json({
+      id: noteId,
+      message: adjustApplied ? 'Note saved and plan adjusted' : 'Note saved',
+      plan_adjusted: adjustApplied,
+      adjust_skipped_reason: adjustSkippedReason,
+      adjust_count: adjustCount,
+      max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+      remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+    });
   });
 
   // Grade Unit

@@ -7,6 +7,8 @@ import path from 'path';
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const PLAN_DIR = path.join(DATA_DIR, 'plan');
+const MAX_PLAN_GENERATIONS = Math.max(0, Number(process.env.MAX_PLAN_GENERATIONS || 3));
+const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
 
 const savePlanFile = (studentId: number, unitId: number, content: string) => {
   if (!content?.trim()) return null;
@@ -48,8 +50,22 @@ export default async (req: Request) => {
   if (req.method === 'GET') {
     const match = url.pathname.match(/^\/api\/plans\/(\d+)$/);
     if (match) {
-      const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, match[1]);
-      return new Response(JSON.stringify(plan || null));
+      const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, match[1]) as any;
+      if (!plan) {
+        return new Response(JSON.stringify(null));
+      }
+
+      const generateCount = Number(plan.generate_count || 0);
+      const adjustCount = Number(plan.adjust_count || 0);
+      return new Response(JSON.stringify({
+        ...plan,
+        generate_count: generateCount,
+        adjust_count: adjustCount,
+        max_generate_count: MAX_PLAN_GENERATIONS,
+        max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+        remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
+        remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+      }));
     }
   }
 
@@ -102,17 +118,45 @@ export default async (req: Request) => {
       }
       const planContent = ai_raw.trim();
       
-      const existing = db.prepare('SELECT id FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId);
-      if (existing) {
-        db.prepare('UPDATE study_plans SET plan_content = ?, updated_at = CURRENT_TIMESTAMP WHERE student_id = ? AND unit_id = ?').run(planContent, user.id, unitId);
-      } else {
-        db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content) VALUES (?, ?, ?)').run(user.id, unitId, planContent);
+      const existing = db.prepare('SELECT id, generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
+      const currentGenerateCount = Number(existing?.generate_count || 0);
+      if (currentGenerateCount >= MAX_PLAN_GENERATIONS) {
+        return new Response(JSON.stringify({
+          error: `学习计划最多可生成 ${MAX_PLAN_GENERATIONS} 次，当前次数已用完。`,
+          max_generate_count: MAX_PLAN_GENERATIONS,
+          generate_count: currentGenerateCount,
+          remaining_generate_count: 0
+        }), { status: 429 });
       }
+
+      if (existing) {
+        db.prepare('UPDATE study_plans SET plan_content = ?, generate_count = COALESCE(generate_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE student_id = ? AND unit_id = ?').run(planContent, user.id, unitId);
+      } else {
+        db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content, generate_count, adjust_count) VALUES (?, ?, ?, ?, ?)').run(user.id, unitId, planContent, 1, 0);
+      }
+
+      const refreshed = db.prepare('SELECT generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
+      const generateCount = Number(refreshed?.generate_count || 0);
+      const adjustCount = Number(refreshed?.adjust_count || 0);
 
       const saved = savePlanFile(user.id, Number(unitId), planContent);
       const elapsed_ms = Date.now() - startedAt;
       console.log('[plans.generate] elapsed_ms=%d unitId=%s user=%s', elapsed_ms, unitId, user.id);
-      return new Response(JSON.stringify({ plan_content: planContent, prompt_preview: prompt, files_used: files, ai_raw, plan_file: saved, plan_version: null, elapsed_ms }));
+      return new Response(JSON.stringify({
+        plan_content: planContent,
+        prompt_preview: prompt,
+        files_used: files,
+        ai_raw,
+        plan_file: saved,
+        plan_version: null,
+        elapsed_ms,
+        generate_count: generateCount,
+        adjust_count: adjustCount,
+        max_generate_count: MAX_PLAN_GENERATIONS,
+        max_adjust_count: MAX_PLAN_ADJUSTMENTS,
+        remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
+        remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
+      }));
     } catch (err: any) {
       const isTimeout = err?.message === 'AI_REQUEST_TIMEOUT';
       const isAbort = err?.name === 'AbortError';
