@@ -11,7 +11,7 @@ const MAX_PLAN_GENERATIONS = Math.max(0, Number(process.env.MAX_PLAN_GENERATIONS
 const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
 
 const getPretestFilePath = (unitId: number) => {
-  const folder = path.join(DATA_DIR, `unit_plan_unit${unitId}`);
+  const folder = path.join(DATA_DIR, `unit_plan/unit${unitId}`);
   const filename = `unit${unitId}plantest.md`;
   return path.join(folder, filename);
 };
@@ -21,7 +21,7 @@ const resolvePretestFilePath = (unitId: number) => {
   if (fs.existsSync(primary)) return primary;
 
   const localDataRoot = path.join(process.cwd(), 'data');
-  const fallback = path.join(localDataRoot, `unit_plan_unit${unitId}`, `unit${unitId}plantest.md`);
+  const fallback = path.join(localDataRoot, `unit_plan/unit${unitId}`, `unit${unitId}plantest.md`);
   if (fs.existsSync(fallback)) return fallback;
 
   return primary;
