@@ -52,7 +52,9 @@ export default async (req: Request) => {
         const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
         const noteAttachmentPath = latestNote.file_url && String(latestNote.file_url).startsWith('/notes/')
           ? path.join(process.env.DATA_DIR || '/data', 'notes', path.basename(String(latestNote.file_url)))
-          : null;
+          : latestNote.file_url && String(latestNote.file_url).startsWith('/uploads/')
+            ? path.join(process.env.UPLOADS_DIR || path.join(process.env.DATA_DIR || '/data', 'uploads'), path.basename(String(latestNote.file_url)))
+            : null;
         const promptWithNoteFile = noteAttachmentPath ? `${basePrompt}\nFILES: ${noteAttachmentPath}` : basePrompt;
         const { prompt, files } = await buildPromptWithFiles(promptWithNoteFile, client);
 

@@ -137,6 +137,12 @@ async function startServer() {
     }
   };
 
+  const resolveFilePathFromToken = (filePath: string) => {
+    if (filePath.startsWith('/notes/')) return path.join(NOTES_DIR, path.basename(filePath));
+    if (filePath.startsWith('/uploads/')) return path.join(uploadsDir, path.basename(filePath));
+    return path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(path.resolve(DATA_DIR), filePath);
+  };
+
   const buildPromptWithFiles = async (basePrompt: string, client?: any) => {
     const files = Array.from(basePrompt.matchAll(/FILES:\s*([^\n]+)/ig))
       .flatMap(match => match[1].split(',').map(f => f.trim()))
@@ -146,33 +152,42 @@ async function startServer() {
     const fileBlocks: string[] = [];
     const usedFiles: string[] = [];
     const dataRoot = path.resolve(DATA_DIR);
+    const uploadsRoot = path.resolve(uploadsDir);
+    const notesRoot = path.resolve(NOTES_DIR);
     const allowedTextExt = new Set(['.md', '.txt', '.json', '.csv', '.yaml', '.yml']);
     const maxTextBytes = 512 * 1024; // inline text cap
     const maxBinaryBytes = 20 * 1024 * 1024;
 
     for (const filePath of uniqueFiles) {
-      const resolved = path.isAbsolute(filePath)
-        ? path.resolve(filePath)
-        : path.resolve(dataRoot, filePath);
-
-      if (!resolved.startsWith(dataRoot)) continue; // prevent path escape
+      const resolved = resolveFilePathFromToken(filePath);
+      const isAllowedPath = resolved.startsWith(dataRoot) || resolved.startsWith(uploadsRoot) || resolved.startsWith(notesRoot);
+      if (!isAllowedPath) continue;
       if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue;
 
       const ext = path.extname(resolved).toLowerCase();
       const stat = fs.statSync(resolved);
 
+      if (stat.size <= maxBinaryBytes && client) {
+        const extractedText = await extractBinaryFileText(client, resolved);
+        if (extractedText) {
+          fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+          usedFiles.push(resolved);
+          continue;
+        }
+      }
+
       if (allowedTextExt.has(ext) && stat.size <= maxTextBytes) {
         const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
         fileBlocks.push(`[文件: ${resolved}]\n${content}`);
         usedFiles.push(resolved);
-      } else if (stat.size <= maxBinaryBytes && client) {
-        const extractedText = await extractBinaryFileText(client, resolved);
-        if (extractedText) {
-          fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+      } else if (path.extname(resolved).toLowerCase() === '.pdf') {
+        const fallbackPdfText = await tryExtractPdfLocally(resolved);
+        if (fallbackPdfText) {
+          fileBlocks.push(`[文件: ${resolved}][本地PDF提取]\n${fallbackPdfText}`);
+          usedFiles.push(resolved);
         } else {
           fileBlocks.push(`[文件: ${resolved}] (尝试提取失败，可能是格式不支持或OCR失败)`);
         }
-        usedFiles.push(resolved);
       } else {
         fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制或未提供AI文件提取能力)`);
       }
@@ -524,7 +539,9 @@ async function startServer() {
         const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
         const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
           ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
-          : null;
+          : fileUrl && String(fileUrl).startsWith('/uploads/')
+            ? path.join(uploadsDir, path.basename(String(fileUrl)))
+            : null;
         const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
         const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 
@@ -561,7 +578,9 @@ async function startServer() {
       const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
       const noteAttachmentPath = latestNote.file_url && String(latestNote.file_url).startsWith('/notes/')
         ? path.join(NOTES_DIR, path.basename(String(latestNote.file_url)))
-        : null;
+        : latestNote.file_url && String(latestNote.file_url).startsWith('/uploads/')
+          ? path.join(uploadsDir, path.basename(String(latestNote.file_url)))
+          : null;
       const promptWithNoteFile = noteAttachmentPath ? `${basePrompt}\nFILES: ${noteAttachmentPath}` : basePrompt;
       const { prompt, files } = await buildPromptWithFiles(promptWithNoteFile, client);
 
@@ -628,7 +647,9 @@ async function startServer() {
         : null;
       const latestAttachmentFile = latestAttachment && String(latestAttachment).startsWith('/notes/')
         ? path.join(NOTES_DIR, path.basename(String(latestAttachment)))
-        : null;
+        : latestAttachment && String(latestAttachment).startsWith('/uploads/')
+          ? path.join(uploadsDir, path.basename(String(latestAttachment)))
+          : null;
       const basePrompt = prompts.qaAssistant(mergedContext, question);
       const promptWithAttachment = latestAttachmentFile ? `${basePrompt}\nFILES: ${latestAttachmentFile}` : basePrompt;
       const { prompt, files } = await buildPromptWithFiles(promptWithAttachment, client);

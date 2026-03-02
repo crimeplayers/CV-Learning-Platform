@@ -84,7 +84,9 @@ export default async (req: Request) => {
           const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
           const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
             ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
-            : null;
+            : fileUrl && String(fileUrl).startsWith('/uploads/')
+              ? path.join(process.env.UPLOADS_DIR || path.join(DATA_DIR, 'uploads'), path.basename(String(fileUrl)))
+              : null;
           const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
           const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 

@@ -33,7 +33,9 @@ export default async (req: Request) => {
         : null;
       const latestAttachmentFile = latestAttachment && String(latestAttachment).startsWith('/notes/')
         ? path.join(process.env.DATA_DIR || '/data', 'notes', path.basename(String(latestAttachment)))
-        : null;
+        : latestAttachment && String(latestAttachment).startsWith('/uploads/')
+          ? path.join(process.env.UPLOADS_DIR || path.join(process.env.DATA_DIR || '/data', 'uploads'), path.basename(String(latestAttachment)))
+          : null;
       const basePrompt = prompts.qaAssistant(mergedContext, question);
       const promptWithAttachment = latestAttachmentFile ? `${basePrompt}\nFILES: ${latestAttachmentFile}` : basePrompt;
       const { prompt, files } = await buildPromptWithFiles(promptWithAttachment, client);

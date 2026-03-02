@@ -6,6 +6,8 @@ import path from 'path';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 const DATA_DIR = process.env.DATA_DIR || '/data';
+const NOTES_DIR = path.join(DATA_DIR, 'notes');
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(DATA_DIR, 'uploads');
 const MAX_FILE_PREVIEW = 8000;
 
 export const authenticate = (req: Request) => {
@@ -84,33 +86,48 @@ export const buildPromptWithFiles = async (basePrompt: string, client?: any) => 
   const fileBlocks: string[] = [];
   const usedFiles: string[] = [];
   const dataRoot = path.resolve(DATA_DIR);
+  const notesRoot = path.resolve(NOTES_DIR);
+  const uploadsRoot = path.resolve(UPLOADS_DIR);
   const allowedTextExt = new Set(['.md', '.txt', '.json', '.csv', '.yaml', '.yml']);
   const maxTextBytes = 512 * 1024;
   const maxBinaryBytes = 20 * 1024 * 1024;
 
-  for (const filePath of uniqueFiles) {
-    const resolved = path.isAbsolute(filePath)
-      ? path.resolve(filePath)
-      : path.resolve(dataRoot, filePath);
+  const resolveFilePathFromToken = (filePath: string) => {
+    if (filePath.startsWith('/notes/')) return path.join(NOTES_DIR, path.basename(filePath));
+    if (filePath.startsWith('/uploads/')) return path.join(UPLOADS_DIR, path.basename(filePath));
+    return path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(dataRoot, filePath);
+  };
 
-    if (!resolved.startsWith(dataRoot)) continue;
+  for (const filePath of uniqueFiles) {
+    const resolved = resolveFilePathFromToken(filePath);
+    const isAllowedPath = resolved.startsWith(dataRoot) || resolved.startsWith(notesRoot) || resolved.startsWith(uploadsRoot);
+    if (!isAllowedPath) continue;
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue;
 
     const ext = path.extname(resolved).toLowerCase();
     const stat = fs.statSync(resolved);
 
+    if (stat.size <= maxBinaryBytes && client) {
+      const extractedText = await extractBinaryFileText(client, resolved);
+      if (extractedText) {
+        fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+        usedFiles.push(resolved);
+        continue;
+      }
+    }
+
     if (allowedTextExt.has(ext) && stat.size <= maxTextBytes) {
       const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
       fileBlocks.push(`[文件: ${resolved}]\n${content}`);
       usedFiles.push(resolved);
-    } else if (stat.size <= maxBinaryBytes && client) {
-      const extractedText = await extractBinaryFileText(client, resolved);
-      if (extractedText) {
-        fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+    } else if (ext === '.pdf') {
+      const fallbackPdfText = await tryExtractPdfLocally(resolved);
+      if (fallbackPdfText) {
+        fileBlocks.push(`[文件: ${resolved}][本地PDF提取]\n${fallbackPdfText}`);
+        usedFiles.push(resolved);
       } else {
         fileBlocks.push(`[文件: ${resolved}] (尝试提取失败，可能是格式不支持或OCR失败)`);
       }
-      usedFiles.push(resolved);
     } else {
       fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制或未提供AI文件提取能力)`);
     }
