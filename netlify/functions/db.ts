@@ -37,6 +37,8 @@ db.exec(`
     plan_content TEXT NOT NULL,
     generate_count INTEGER NOT NULL DEFAULT 0,
     adjust_count INTEGER NOT NULL DEFAULT 0,
+    adjust_daily_count INTEGER NOT NULL DEFAULT 0,
+    adjust_daily_date TEXT,
     pretest_answer TEXT,
     pretest_submitted_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -83,6 +85,16 @@ try {
 }
 try {
   db.exec("ALTER TABLE study_plans ADD COLUMN adjust_count INTEGER NOT NULL DEFAULT 0");
+} catch (e) {
+  // Column might already exist
+}
+try {
+  db.exec("ALTER TABLE study_plans ADD COLUMN adjust_daily_count INTEGER NOT NULL DEFAULT 0");
+} catch (e) {
+  // Column might already exist
+}
+try {
+  db.exec("ALTER TABLE study_plans ADD COLUMN adjust_daily_date TEXT");
 } catch (e) {
   // Column might already exist
 }

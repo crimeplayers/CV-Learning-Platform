@@ -8,6 +8,13 @@ import path from 'path';
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const NOTES_DIR = path.join(DATA_DIR, 'notes');
 const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
+const getTodayKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 if (!fs.existsSync(NOTES_DIR)) {
   fs.mkdirSync(NOTES_DIR, { recursive: true });
 }
@@ -69,9 +76,11 @@ export default async (req: Request) => {
       try {
         const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
         if (plan) {
-          adjustCount = Number(plan.adjust_count || 0);
-          if (adjustCount >= MAX_PLAN_ADJUSTMENTS) {
-            adjustSkippedReason = `根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
+          const todayKey = getTodayKey();
+          const currentDailyAdjustCount = plan.adjust_daily_date === todayKey ? Number(plan.adjust_daily_count || 0) : 0;
+          adjustCount = currentDailyAdjustCount;
+          if (currentDailyAdjustCount >= MAX_PLAN_ADJUSTMENTS) {
+            adjustSkippedReason = `今日根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
           } else {
             const { client, model } = getAiClient();
             const now = new Date();
@@ -105,9 +114,9 @@ export default async (req: Request) => {
             });
 
             const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
-            db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+            db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, adjust_daily_count = CASE WHEN adjust_daily_date = ? THEN COALESCE(adjust_daily_count, 0) + 1 ELSE 1 END, adjust_daily_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, todayKey, todayKey, plan.id);
             adjustApplied = true;
-            adjustCount += 1;
+            adjustCount = currentDailyAdjustCount + 1;
           }
         } else {
           adjustSkippedReason = '当前单元尚未生成学习计划，已仅保存笔记';
@@ -123,6 +132,7 @@ export default async (req: Request) => {
         plan_adjusted: adjustApplied,
         adjust_skipped_reason: adjustSkippedReason,
         adjust_count: adjustCount,
+        adjust_count_scope: 'daily',
         max_adjust_count: MAX_PLAN_ADJUSTMENTS,
         remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
       }));

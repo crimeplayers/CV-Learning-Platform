@@ -17,6 +17,13 @@ const NOTES_DIR = path.join(DATA_DIR, 'notes');
 const MAX_FILE_PREVIEW = 8000;
 const MAX_PLAN_GENERATIONS = Math.max(0, Number(process.env.MAX_PLAN_GENERATIONS || 3));
 const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
+const getTodayKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const getPretestFilePath = (unitId: number) => {
   const folder = path.join(DATA_DIR, `admin/plan_test`);
@@ -419,12 +426,16 @@ async function startServer() {
       return res.json(null);
     }
 
+    const todayKey = getTodayKey();
     const generateCount = Number(plan.generate_count || 0);
-    const adjustCount = Number(plan.adjust_count || 0);
+    const adjustCountTotal = Number(plan.adjust_count || 0);
+    const adjustCount = plan.adjust_daily_date === todayKey ? Number(plan.adjust_daily_count || 0) : 0;
     res.json({
       ...plan,
       generate_count: generateCount,
+      adjust_count_total: adjustCountTotal,
       adjust_count: adjustCount,
+      adjust_count_scope: 'daily',
       max_generate_count: MAX_PLAN_GENERATIONS,
       max_adjust_count: MAX_PLAN_ADJUSTMENTS,
       remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
@@ -481,7 +492,7 @@ async function startServer() {
 
       const knowledgeAnswer = trimmedPretestAnswer || String(existing?.pretest_answer || '').trim();
       if (pretestQuestion || knowledgeAnswer) {
-        basePrompt = `${basePrompt}\n\n[学生基础水平测评题目]\n${pretestQuestion || '（未读取到题目）'}\n\n[学生基础水平测评答案]\n${knowledgeAnswer || '（未提供答案）'}\n\n请结合“测评题目 + 学生答案”判断学生的基础知识水平并制定学习计划：基础薄弱则补充基础概念与练习；基础较好则增加挑战任务与进阶资源。`;
+        basePrompt = prompts.buildPlanPrompt(basePrompt, pretestQuestion, knowledgeAnswer);
       }
       const { prompt, files } = await buildPromptWithFiles(basePrompt, client);
 
@@ -513,7 +524,7 @@ async function startServer() {
       let ai_raw = response.choices?.[0]?.message?.content?.trim() || '';
 
       if (!ai_raw) {
-        const retryPrompt = `${prompt}\n\n请仅输出最终学习计划正文（中文），不要输出思考过程，不要留空。`;
+        const retryPrompt = prompts.planRetry(prompt);
         response = await callAiWithTimeout(retryPrompt);
         ai_raw = response.choices?.[0]?.message?.content?.trim() || '';
       }
@@ -541,9 +552,11 @@ async function startServer() {
         db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content, generate_count, adjust_count, pretest_answer, pretest_submitted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(req.user.id, unitId, planContent, 1, 0, trimmedPretestAnswer);
       }
 
-      const refreshed = db.prepare('SELECT generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
+      const refreshed = db.prepare('SELECT generate_count, adjust_count, adjust_daily_count, adjust_daily_date FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
+      const todayKey = getTodayKey();
       const generateCount = Number(refreshed?.generate_count || 0);
-      const adjustCount = Number(refreshed?.adjust_count || 0);
+      const adjustCountTotal = Number(refreshed?.adjust_count || 0);
+      const adjustCount = refreshed?.adjust_daily_date === todayKey ? Number(refreshed?.adjust_daily_count || 0) : 0;
 
       const saved = savePlanFile(req.user.id, Number(unitId), planContent);
       const elapsed_ms = Date.now() - startedAt;
@@ -557,7 +570,9 @@ async function startServer() {
         plan_version: saved?.version,
         elapsed_ms,
         generate_count: generateCount,
+        adjust_count_total: adjustCountTotal,
         adjust_count: adjustCount,
+        adjust_count_scope: 'daily',
         max_generate_count: MAX_PLAN_GENERATIONS,
         max_adjust_count: MAX_PLAN_ADJUSTMENTS,
         remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
@@ -614,9 +629,11 @@ async function startServer() {
     try {
       const plan = db.prepare('SELECT * FROM study_plans WHERE student_id = ? AND unit_id = ?').get(req.user.id, unitId) as any;
       if (plan) {
-        adjustCount = Number(plan.adjust_count || 0);
-        if (adjustCount >= MAX_PLAN_ADJUSTMENTS) {
-          adjustSkippedReason = `根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
+        const todayKey = getTodayKey();
+        const currentDailyAdjustCount = plan.adjust_daily_date === todayKey ? Number(plan.adjust_daily_count || 0) : 0;
+        adjustCount = currentDailyAdjustCount;
+        if (currentDailyAdjustCount >= MAX_PLAN_ADJUSTMENTS) {
+          adjustSkippedReason = `今日根据笔记调整计划已达到上限（${MAX_PLAN_ADJUSTMENTS}次）`;
         } else {
           const { client, model } = getAiClient();
           const now = new Date();
@@ -650,11 +667,11 @@ async function startServer() {
           });
 
           const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
-          db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, plan.id);
+          db.prepare('UPDATE study_plans SET plan_content = ?, adjust_count = COALESCE(adjust_count, 0) + 1, adjust_daily_count = CASE WHEN adjust_daily_date = ? THEN COALESCE(adjust_daily_count, 0) + 1 ELSE 1 END, adjust_daily_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPlanContent, todayKey, todayKey, plan.id);
 
           savePlanFile(req.user.id, Number(unitId), newPlanContent);
           adjustApplied = true;
-          adjustCount += 1;
+          adjustCount = currentDailyAdjustCount + 1;
         }
       } else {
         adjustSkippedReason = '当前单元尚未生成学习计划，已仅保存笔记';
@@ -670,6 +687,7 @@ async function startServer() {
       plan_adjusted: adjustApplied,
       adjust_skipped_reason: adjustSkippedReason,
       adjust_count: adjustCount,
+      adjust_count_scope: 'daily',
       max_adjust_count: MAX_PLAN_ADJUSTMENTS,
       remaining_adjust_count: Math.max(0, MAX_PLAN_ADJUSTMENTS - adjustCount)
     });
@@ -706,7 +724,7 @@ async function startServer() {
       let result: any = parseGradeResult(raw);
 
       if (!result) {
-        const repairPrompt = `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`;
+        const repairPrompt = prompts.gradeRepair();
         const retryResponse = await client.chat.completions.create({
           model,
           messages: [

@@ -67,7 +67,7 @@ export default async (req: Request) => {
         let result: any = parseGradeResult(raw);
 
         if (!result) {
-          const repairPrompt = `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`;
+          const repairPrompt = prompts.gradeRepair();
           const retryResponse = await client.chat.completions.create({
             model,
             messages: [

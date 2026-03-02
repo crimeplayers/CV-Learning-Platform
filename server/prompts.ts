@@ -1,4 +1,20 @@
 export const prompts = {
+  buildPlanPrompt: (basePrompt: string, pretestQuestion: string, pretestAnswer: string) => `${basePrompt}
+
+[学生基础水平测评题目]
+${pretestQuestion || '（未读取到题目）'}
+
+[学生基础水平测评答案]
+${pretestAnswer || '（未提供答案）'}
+
+请结合“测评题目 + 学生答案”判断学生的基础知识水平并制定学习计划：基础薄弱则补充基础概念与练习；基础较好则增加挑战任务与进阶资源。`,
+
+  planRetry: (currentPrompt: string) => `${currentPrompt}
+
+请仅输出最终学习计划正文（中文），不要输出思考过程，不要留空。`,
+
+  gradeRepair: () => `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`,
+
   // 1. AI学习计划生成提示词
   generatePlan: (unit: any, resourcesText: string) => `为学生制定本周学习计划。
 单元名称：${unit.title}

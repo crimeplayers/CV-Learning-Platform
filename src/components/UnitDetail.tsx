@@ -147,7 +147,7 @@ export default function UnitDetail() {
         throw new Error(noteData?.error || '笔记提交失败');
       }
       if (noteData?.plan_adjusted) {
-        setPlanActionMessage(`已根据笔记更新计划。剩余可调整次数：${noteData.remaining_adjust_count ?? '-'} `);
+        setPlanActionMessage(`已根据笔记更新计划。今日剩余可调整次数：${noteData.remaining_adjust_count ?? '-'} `);
         setPlanActionError('');
       } else if (noteData?.adjust_skipped_reason) {
         setPlanActionError(noteData.adjust_skipped_reason);
@@ -319,7 +319,7 @@ export default function UnitDetail() {
           <div className="mb-8">
             <label className="block text-sm font-medium text-slate-700 mb-2">提交新笔记 (提交后AI将动态调整计划)</label>
             <div className="text-sm text-slate-500 mb-2">
-              计划自动调整次数：{adjustCount}/{maxAdjustCount}（剩余 {remainingAdjustCount} 次）
+              今日计划自动调整次数：{adjustCount}/{maxAdjustCount}（今日剩余 {remainingAdjustCount} 次）
             </div>
             <textarea
               value={newNote}

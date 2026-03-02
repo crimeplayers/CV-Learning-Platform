@@ -9,6 +9,13 @@ const DATA_DIR = process.env.DATA_DIR || '/data';
 const PLAN_DIR = path.join(DATA_DIR, 'plan');
 const MAX_PLAN_GENERATIONS = Math.max(0, Number(process.env.MAX_PLAN_GENERATIONS || 3));
 const MAX_PLAN_ADJUSTMENTS = Math.max(0, Number(process.env.MAX_PLAN_ADJUSTMENTS || 3));
+const getTodayKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const getPretestFilePath = (unitId: number) => {
   const folder = path.join(DATA_DIR, `admin/plan_test`);
@@ -89,12 +96,16 @@ export default async (req: Request) => {
         return new Response(JSON.stringify(null));
       }
 
+      const todayKey = getTodayKey();
       const generateCount = Number(plan.generate_count || 0);
-      const adjustCount = Number(plan.adjust_count || 0);
+      const adjustCountTotal = Number(plan.adjust_count || 0);
+      const adjustCount = plan.adjust_daily_date === todayKey ? Number(plan.adjust_daily_count || 0) : 0;
       return new Response(JSON.stringify({
         ...plan,
         generate_count: generateCount,
+        adjust_count_total: adjustCountTotal,
         adjust_count: adjustCount,
+        adjust_count_scope: 'daily',
         max_generate_count: MAX_PLAN_GENERATIONS,
         max_adjust_count: MAX_PLAN_ADJUSTMENTS,
         remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
@@ -138,7 +149,7 @@ export default async (req: Request) => {
 
       const knowledgeAnswer = trimmedPretestAnswer || String(existing?.pretest_answer || '').trim();
       if (pretestQuestion || knowledgeAnswer) {
-        basePrompt = `${basePrompt}\n\n[学生基础水平测评题目]\n${pretestQuestion || '（未读取到题目）'}\n\n[学生基础水平测评答案]\n${knowledgeAnswer || '（未提供答案）'}\n\n请结合“测评题目 + 学生答案”判断学生的基础知识水平并制定学习计划：基础薄弱则补充基础概念与练习；基础较好则增加挑战任务与进阶资源。`;
+        basePrompt = prompts.buildPlanPrompt(basePrompt, pretestQuestion, knowledgeAnswer);
       }
       const { prompt, files } = await buildPromptWithFiles(basePrompt, client);
 
@@ -185,9 +196,11 @@ export default async (req: Request) => {
         db.prepare('INSERT INTO study_plans (student_id, unit_id, plan_content, generate_count, adjust_count, pretest_answer, pretest_submitted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(user.id, unitId, planContent, 1, 0, trimmedPretestAnswer);
       }
 
-      const refreshed = db.prepare('SELECT generate_count, adjust_count FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
+      const refreshed = db.prepare('SELECT generate_count, adjust_count, adjust_daily_count, adjust_daily_date FROM study_plans WHERE student_id = ? AND unit_id = ?').get(user.id, unitId) as any;
+      const todayKey = getTodayKey();
       const generateCount = Number(refreshed?.generate_count || 0);
-      const adjustCount = Number(refreshed?.adjust_count || 0);
+      const adjustCountTotal = Number(refreshed?.adjust_count || 0);
+      const adjustCount = refreshed?.adjust_daily_date === todayKey ? Number(refreshed?.adjust_daily_count || 0) : 0;
 
       const saved = savePlanFile(user.id, Number(unitId), planContent);
       const elapsed_ms = Date.now() - startedAt;
@@ -201,7 +214,9 @@ export default async (req: Request) => {
         plan_version: null,
         elapsed_ms,
         generate_count: generateCount,
+        adjust_count_total: adjustCountTotal,
         adjust_count: adjustCount,
+        adjust_count_scope: 'daily',
         max_generate_count: MAX_PLAN_GENERATIONS,
         max_adjust_count: MAX_PLAN_ADJUSTMENTS,
         remaining_generate_count: Math.max(0, MAX_PLAN_GENERATIONS - generateCount),
