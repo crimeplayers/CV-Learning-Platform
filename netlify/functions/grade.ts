@@ -2,6 +2,7 @@ import { Config } from "@netlify/functions";
 import db from './db';
 import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
+import path from 'path';
 
 const parseGradeResult = (raw: string) => {
   if (!raw) return null;
@@ -49,7 +50,11 @@ export default async (req: Request) => {
       try {
         const { client, model } = getAiClient();
         const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
-        const { prompt, files } = buildPromptWithFiles(basePrompt);
+        const noteAttachmentPath = latestNote.file_url && String(latestNote.file_url).startsWith('/notes/')
+          ? path.join(process.env.DATA_DIR || '/data', 'notes', path.basename(String(latestNote.file_url)))
+          : null;
+        const promptWithNoteFile = noteAttachmentPath ? `${basePrompt}\nFILES: ${noteAttachmentPath}` : basePrompt;
+        const { prompt, files } = await buildPromptWithFiles(promptWithNoteFile, client);
 
         const response = await client.chat.completions.create({
           model,

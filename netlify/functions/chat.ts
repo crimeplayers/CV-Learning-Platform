@@ -2,6 +2,7 @@ import { Config } from "@netlify/functions";
 import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 import db from './db';
+import path from 'path';
 
 export default async (req: Request) => {
   const url = new URL(req.url);
@@ -27,8 +28,15 @@ export default async (req: Request) => {
       }
 
       const mergedContext = `${context || ''}${latestNoteContext}`;
+      const latestAttachment = unitId
+        ? (db.prepare('SELECT file_url FROM notes WHERE student_id = ? AND unit_id = ? ORDER BY created_at DESC LIMIT 1').get(user.id, unitId) as any)?.file_url
+        : null;
+      const latestAttachmentFile = latestAttachment && String(latestAttachment).startsWith('/notes/')
+        ? path.join(process.env.DATA_DIR || '/data', 'notes', path.basename(String(latestAttachment)))
+        : null;
       const basePrompt = prompts.qaAssistant(mergedContext, question);
-      const { prompt, files } = buildPromptWithFiles(basePrompt);
+      const promptWithAttachment = latestAttachmentFile ? `${basePrompt}\nFILES: ${latestAttachmentFile}` : basePrompt;
+      const { prompt, files } = await buildPromptWithFiles(promptWithAttachment, client);
 
       const response = await client.chat.completions.create({
         model,

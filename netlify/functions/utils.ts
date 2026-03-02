@@ -37,18 +37,58 @@ export const getAiClient = () => {
   return { client, model };
 };
 
-export const buildPromptWithFiles = (basePrompt: string) => {
-  const match = basePrompt.match(/FILES:\s*([^\n]+)/i);
-  const files = match ? match[1].split(',').map(f => f.trim()).filter(Boolean) : [];
+const tryExtractPdfLocally = async (resolvedPath: string) => {
+  try {
+    const pdfParseModule: any = await import('pdf-parse');
+    const pdfParse = pdfParseModule?.default || pdfParseModule;
+    const buffer = fs.readFileSync(resolvedPath);
+    const parsed = await pdfParse(buffer);
+    return (parsed?.text || '').slice(0, MAX_FILE_PREVIEW);
+  } catch (err) {
+    return '';
+  }
+};
+
+const extractBinaryFileText = async (client: any, resolvedPath: string) => {
+  try {
+    const uploaded: any = await client.files.create({
+      file: fs.createReadStream(resolvedPath),
+      purpose: 'file-extract'
+    });
+    const contentResp: any = await client.files.content(uploaded.id);
+    if (typeof contentResp?.text === 'function') {
+      const text = await contentResp.text();
+      return (text || '').slice(0, MAX_FILE_PREVIEW);
+    }
+    if (typeof contentResp?.text === 'string') {
+      return contentResp.text.slice(0, MAX_FILE_PREVIEW);
+    }
+    if (typeof contentResp === 'string') {
+      return contentResp.slice(0, MAX_FILE_PREVIEW);
+    }
+    return '';
+  } catch (err) {
+    if (path.extname(resolvedPath).toLowerCase() === '.pdf') {
+      return await tryExtractPdfLocally(resolvedPath);
+    }
+    return '';
+  }
+};
+
+export const buildPromptWithFiles = async (basePrompt: string, client?: any) => {
+  const files = Array.from(basePrompt.matchAll(/FILES:\s*([^\n]+)/ig))
+    .flatMap(match => match[1].split(',').map(f => f.trim()))
+    .filter(Boolean);
+  const uniqueFiles = Array.from(new Set(files));
 
   const fileBlocks: string[] = [];
   const usedFiles: string[] = [];
   const dataRoot = path.resolve(DATA_DIR);
   const allowedTextExt = new Set(['.md', '.txt', '.json', '.csv', '.yaml', '.yml']);
   const maxTextBytes = 512 * 1024;
-  const maxBinaryBytes = 5 * 1024 * 1024; // attachments up to 5MB (not inlined)
+  const maxBinaryBytes = 20 * 1024 * 1024;
 
-  for (const filePath of files) {
+  for (const filePath of uniqueFiles) {
     const resolved = path.isAbsolute(filePath)
       ? path.resolve(filePath)
       : path.resolve(dataRoot, filePath);
@@ -63,11 +103,16 @@ export const buildPromptWithFiles = (basePrompt: string) => {
       const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
       fileBlocks.push(`[文件: ${resolved}]\n${content}`);
       usedFiles.push(resolved);
-    } else if (stat.size <= maxBinaryBytes) {
-      fileBlocks.push(`[二进制文件(未内联): ${resolved}] 大小: ${stat.size} bytes。请将该文件视为外部附件，无法直接内联。`);
+    } else if (stat.size <= maxBinaryBytes && client) {
+      const extractedText = await extractBinaryFileText(client, resolved);
+      if (extractedText) {
+        fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+      } else {
+        fileBlocks.push(`[文件: ${resolved}] (尝试提取失败，可能是格式不支持或OCR失败)`);
+      }
       usedFiles.push(resolved);
     } else {
-      fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制)`);
+      fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制或未提供AI文件提取能力)`);
     }
   }
 

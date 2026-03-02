@@ -39,7 +39,7 @@ const upload = multer({ storage: storage });
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   app.use(cors()); // <--- 新增这一行
 
@@ -99,18 +99,58 @@ async function startServer() {
     };
   };
 
-  const buildPromptWithFiles = (basePrompt: string) => {
-    const match = basePrompt.match(/FILES:\s*([^\n]+)/i);
-    const files = match ? match[1].split(',').map(f => f.trim()).filter(Boolean) : [];
+  const tryExtractPdfLocally = async (resolvedPath: string) => {
+    try {
+      const pdfParseModule: any = await import('pdf-parse');
+      const pdfParse = pdfParseModule?.default || pdfParseModule;
+      const buffer = fs.readFileSync(resolvedPath);
+      const parsed = await pdfParse(buffer);
+      return (parsed?.text || '').slice(0, MAX_FILE_PREVIEW);
+    } catch (err) {
+      return '';
+    }
+  };
+
+  const extractBinaryFileText = async (client: any, resolvedPath: string) => {
+    try {
+      const uploaded: any = await client.files.create({
+        file: fs.createReadStream(resolvedPath),
+        purpose: 'file-extract'
+      });
+      const contentResp: any = await client.files.content(uploaded.id);
+      if (typeof contentResp?.text === 'function') {
+        const text = await contentResp.text();
+        return (text || '').slice(0, MAX_FILE_PREVIEW);
+      }
+      if (typeof contentResp?.text === 'string') {
+        return contentResp.text.slice(0, MAX_FILE_PREVIEW);
+      }
+      if (typeof contentResp === 'string') {
+        return contentResp.slice(0, MAX_FILE_PREVIEW);
+      }
+      return '';
+    } catch (err) {
+      if (path.extname(resolvedPath).toLowerCase() === '.pdf') {
+        return await tryExtractPdfLocally(resolvedPath);
+      }
+      return '';
+    }
+  };
+
+  const buildPromptWithFiles = async (basePrompt: string, client?: any) => {
+    const files = Array.from(basePrompt.matchAll(/FILES:\s*([^\n]+)/ig))
+      .flatMap(match => match[1].split(',').map(f => f.trim()))
+      .filter(Boolean);
+    const uniqueFiles = Array.from(new Set(files));
 
     const fileBlocks: string[] = [];
     const usedFiles: string[] = [];
     const dataRoot = path.resolve(DATA_DIR);
     const allowedTextExt = new Set(['.md', '.txt', '.json', '.csv', '.yaml', '.yml']);
     const maxTextBytes = 512 * 1024; // inline text cap
-    const maxBinaryBytes = 5 * 1024 * 1024; // attachments up to 5MB (not inlined)
+    const maxBinaryBytes = 20 * 1024 * 1024;
 
-    for (const filePath of files) {
+    for (const filePath of uniqueFiles) {
       const resolved = path.isAbsolute(filePath)
         ? path.resolve(filePath)
         : path.resolve(dataRoot, filePath);
@@ -123,14 +163,18 @@ async function startServer() {
 
       if (allowedTextExt.has(ext) && stat.size <= maxTextBytes) {
         const content = fs.readFileSync(resolved, 'utf-8').slice(0, MAX_FILE_PREVIEW);
-        fileBlocks.push(`[文件: ${resolved}]
-${content}`);
+        fileBlocks.push(`[文件: ${resolved}]\n${content}`);
         usedFiles.push(resolved);
-      } else if (stat.size <= maxBinaryBytes) {
-        fileBlocks.push(`[二进制文件(未内联): ${resolved}] 大小: ${stat.size} bytes。请将该文件视为外部附件，无法直接内联。`);
+      } else if (stat.size <= maxBinaryBytes && client) {
+        const extractedText = await extractBinaryFileText(client, resolved);
+        if (extractedText) {
+          fileBlocks.push(`[文件: ${resolved}][提取文本]\n${extractedText}`);
+        } else {
+          fileBlocks.push(`[文件: ${resolved}] (尝试提取失败，可能是格式不支持或OCR失败)`);
+        }
         usedFiles.push(resolved);
       } else {
-        fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制)`);
+        fileBlocks.push(`[文件: ${resolved}] (跳过附件，原因: 非文本且超过限制或未提供AI文件提取能力)`);
       }
     }
 
@@ -360,7 +404,7 @@ ${content}`);
 
         basePrompt = prompts.generatePlan(unit, resourcesText);
       }
-      const { prompt, files } = buildPromptWithFiles(basePrompt);
+      const { prompt, files } = await buildPromptWithFiles(basePrompt, client);
 
       const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 60000);
       const maxCompletionTokens = Number(process.env.AI_PLAN_MAX_TOKENS || 4800);
@@ -477,11 +521,16 @@ ${content}`);
           `单元周次范围: 第${unit.week_range}周`
         ].join('\n');
 
-        const prompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+        const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+        const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
+          ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
+          : null;
+        const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
+        const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 
         const response = await client.chat.completions.create({
           model,
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: 'user', content: adjustPrompt }],
         });
 
         const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
@@ -510,7 +559,11 @@ ${content}`);
     try {
       const { client, model } = getAiClient();
       const basePrompt = prompts.gradeUnit(unit, plan, latestNote);
-      const { prompt, files } = buildPromptWithFiles(basePrompt);
+      const noteAttachmentPath = latestNote.file_url && String(latestNote.file_url).startsWith('/notes/')
+        ? path.join(NOTES_DIR, path.basename(String(latestNote.file_url)))
+        : null;
+      const promptWithNoteFile = noteAttachmentPath ? `${basePrompt}\nFILES: ${noteAttachmentPath}` : basePrompt;
+      const { prompt, files } = await buildPromptWithFiles(promptWithNoteFile, client);
 
       const response = await client.chat.completions.create({
         model,
@@ -570,8 +623,15 @@ ${content}`);
       }
 
       const mergedContext = `${context || ''}${latestNoteContext}`;
+      const latestAttachment = unitId
+        ? (db.prepare('SELECT file_url FROM notes WHERE student_id = ? AND unit_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.id, unitId) as any)?.file_url
+        : null;
+      const latestAttachmentFile = latestAttachment && String(latestAttachment).startsWith('/notes/')
+        ? path.join(NOTES_DIR, path.basename(String(latestAttachment)))
+        : null;
       const basePrompt = prompts.qaAssistant(mergedContext, question);
-      const { prompt, files } = buildPromptWithFiles(basePrompt);
+      const promptWithAttachment = latestAttachmentFile ? `${basePrompt}\nFILES: ${latestAttachmentFile}` : basePrompt;
+      const { prompt, files } = await buildPromptWithFiles(promptWithAttachment, client);
 
       const response = await client.chat.completions.create({
         model,

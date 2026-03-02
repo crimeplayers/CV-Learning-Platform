@@ -73,7 +73,7 @@ export default async (req: Request) => {
 
         basePrompt = prompts.generatePlan(unit, resourcesText);
       }
-      const { prompt, files } = buildPromptWithFiles(basePrompt);
+      const { prompt, files } = await buildPromptWithFiles(basePrompt, client);
 
       const aiTimeoutMs = Number(process.env.AI_TIMEOUT_MS || 60000);
       const aiCall = client.chat.completions.create(

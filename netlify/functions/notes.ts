@@ -1,6 +1,6 @@
 import { Config } from "@netlify/functions";
 import db from './db';
-import { authenticate, getAiClient } from './utils';
+import { authenticate, getAiClient, buildPromptWithFiles } from './utils';
 import { prompts } from '../../server/prompts';
 import fs from 'fs';
 import path from 'path';
@@ -81,11 +81,16 @@ export default async (req: Request) => {
             `单元周次范围: 第${unit.week_range}周`
           ].join('\n');
 
-          const prompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+          const baseAdjustPrompt = prompts.adjustPlan(unit, plan, content, fileUrl, progressContext);
+          const noteAttachmentPath = fileUrl && String(fileUrl).startsWith('/notes/')
+            ? path.join(NOTES_DIR, path.basename(String(fileUrl)))
+            : null;
+          const adjustPromptWithFile = noteAttachmentPath ? `${baseAdjustPrompt}\nFILES: ${noteAttachmentPath}` : baseAdjustPrompt;
+          const { prompt: adjustPrompt } = await buildPromptWithFiles(adjustPromptWithFile, client);
 
           const response = await client.chat.completions.create({
             model,
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: 'user', content: adjustPrompt }],
           });
 
           const newPlanContent = response.choices?.[0]?.message?.content?.trim() || plan.plan_content;
