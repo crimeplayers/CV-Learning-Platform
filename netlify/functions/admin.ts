@@ -14,6 +14,74 @@ export default async (req: Request) => {
   }
 
   // Users API
+  if (url.pathname === '/api/admin/users/batch' && req.method === 'POST') {
+    const { text } = await req.json();
+    const rawText = String(text || '');
+    if (!rawText.trim()) {
+      return new Response(JSON.stringify({ error: '请输入批量账号文本' }), { status: 400 });
+    }
+
+    const lines = rawText.split(/\r?\n/);
+    const checkUserStmt = db.prepare('SELECT id FROM users WHERE username = ?');
+    const insertStmt = db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)');
+
+    const results: any[] = [];
+    let parsed = 0;
+    let created = 0;
+    let skipped = 0;
+
+    const createMany = db.transaction(() => {
+      for (let i = 0; i < lines.length; i++) {
+        const rawLine = lines[i];
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        parsed += 1;
+        const parts = line.split(/\s+/).filter(Boolean);
+        if (parts.length < 2) {
+          skipped += 1;
+          results.push({ line: i + 1, status: 'skipped', reason: '格式错误，应为“学号 姓名”' });
+          continue;
+        }
+
+        const studentId = String(parts[0] || '').trim();
+        const rawName = parts.slice(1).join(' ').trim();
+        const username = rawName.replace(/\*/g, '').trim();
+
+        if (!studentId || !username) {
+          skipped += 1;
+          results.push({ line: i + 1, status: 'skipped', reason: '学号或姓名为空' });
+          continue;
+        }
+
+        if (checkUserStmt.get(username)) {
+          skipped += 1;
+          results.push({ line: i + 1, studentId, username, status: 'skipped', reason: '用户名已存在' });
+          continue;
+        }
+
+        const hash = bcrypt.hashSync(studentId, 10);
+        const insertResult = insertStmt.run(username, hash, 'student');
+        created += 1;
+        results.push({ line: i + 1, id: insertResult.lastInsertRowid, studentId, username, status: 'created' });
+      }
+    });
+
+    try {
+      createMany();
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err?.message || '批量创建失败' }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify({
+      total_lines: lines.length,
+      parsed,
+      created,
+      skipped,
+      results
+    }));
+  }
+
   if (url.pathname === '/api/admin/users') {
     if (req.method === 'GET') {
       const users = db.prepare('SELECT id, username, role FROM users').all();

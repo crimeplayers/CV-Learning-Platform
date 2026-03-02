@@ -62,6 +62,9 @@ function UsersManagement() {
   const [editingUser, setEditingUser] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ username: '', password: '', role: 'student' });
+  const [batchText, setBatchText] = useState('');
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<any>(null);
 
   const fetchUsers = () => {
     fetch(`${API_BASE_URL}/api/admin/users`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
@@ -105,6 +108,29 @@ function UsersManagement() {
     setIsModalOpen(true);
   };
 
+  const handleBatchImport = async () => {
+    if (!batchText.trim()) return;
+    setBatchLoading(true);
+    setBatchResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ text: batchText })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || '批量导入失败');
+      }
+      setBatchResult(data);
+      fetchUsers();
+    } catch (err: any) {
+      setBatchResult({ error: err.message || '批量导入失败' });
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -115,6 +141,53 @@ function UsersManagement() {
         >
           <Plus className="w-4 h-4 mr-2" /> 添加账户
         </button>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 className="text-lg font-semibold text-slate-900 mb-2">批量注册学生账号</h3>
+        <p className="text-sm text-slate-500 mb-3">每行格式：学号 姓名。姓名中的 * 会自动去掉；创建后账号=姓名，密码=学号。</p>
+        <textarea
+          value={batchText}
+          onChange={(e) => setBatchText(e.target.value)}
+          className="w-full h-36 border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+          placeholder={'20241018016\tliziyi*\n20241018018\twangqianfei*'}
+        />
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            onClick={handleBatchImport}
+            disabled={batchLoading || !batchText.trim()}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
+          >
+            {batchLoading ? '导入中...' : '开始批量创建'}
+          </button>
+          <button
+            onClick={() => { setBatchText(''); setBatchResult(null); }}
+            className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition"
+          >
+            清空
+          </button>
+        </div>
+
+        {batchResult && (
+          <div className="mt-4 text-sm">
+            {batchResult.error ? (
+              <div className="text-rose-600">{batchResult.error}</div>
+            ) : (
+              <>
+                <div className="text-emerald-700">导入完成：成功 {batchResult.created}，跳过 {batchResult.skipped}，解析 {batchResult.parsed} 行。</div>
+                {Array.isArray(batchResult.results) && batchResult.results.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-600">
+                    {batchResult.results.map((item: any, idx: number) => (
+                      <div key={idx} className="py-0.5">
+                        第{item.line}行 - {item.username || '-'} - {item.status === 'created' ? '创建成功' : `已跳过（${item.reason || '未知原因'}）`}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
