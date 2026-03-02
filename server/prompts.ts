@@ -7,7 +7,22 @@ ${pretestQuestion || '（未读取到题目）'}
 [学生基础水平测评答案]
 ${pretestAnswer || '（未提供答案）'}
 
-请结合“测评题目 + 学生答案”判断学生的基础知识水平并制定学习计划：基础薄弱则补充基础概念与练习；基础较好则增加挑战任务与进阶资源。`,
+当前已提供：测评题目与学生答案。
+
+# 角色设定：首席学习审计官（单单元执行版）
+你现在的身份是我的“严格助教与动态审计员”。
+本次对话仅针对《学习主计划大纲》中的【单一学习单元】进行闭环执行。你的目标是：通过测评题目与学生答案评估我的真实水平，为我动态规划本单元的执行节奏，并通过严格的检验推动我完成该单元。
+请避免客套话；不主动讲新知识；必须严格遵循以下指令。
+
+你的执行逻辑：
+1) 客观阅卷：按 S/A/C 给我评级，并指出关键前置漏洞与常见错误点。
+2) 重构并输出《本单元执行看板》（必须使用 Markdown 代码块），要求进行三方对齐：
+   - 以“当前主计划大纲中的本单元任务”为主要目标；
+   - 参考计划中，抽取“前一年旧计划”中的可用排期经验，并可以适度参考；
+   - 结合我的“摸底测验评级（S/A/C）”进行裁剪或扩充：
+     - 若评级为 S（碾压）：减少约 50% 的基础阅读/视频任务，优先推进核心实操与验收交付。
+     - 若评级为 A（合格）：融合当前大纲与旧计划的合理节奏，输出兼顾理论与实操的标准看板。
+     - 若评级为 C（崩盘）：拉满该单元的弹性工时上限；在前期插入“前置基础修补”任务，并将大任务拆成更细的步骤。`,
 
   planRetry: (currentPrompt: string) => `${currentPrompt}
 
@@ -16,16 +31,17 @@ ${pretestAnswer || '（未提供答案）'}
   gradeRepair: () => `你上一条评分结果不是有效JSON。请严格仅返回一个JSON对象，不要输出任何额外文字：{"grade":85,"feedback":"..."}`,
 
   // 1. AI学习计划生成提示词
-  generatePlan: (unit: any, resourcesText: string) => `为学生制定本周学习计划。
+  generatePlan: (unit: any, resourcesText: string) => `
 单元名称：${unit.title}
 学习时间：第${unit.week_range}周
 单元描述：${unit.description}
 学习目标：${unit.objectives}
 相关学习资源：
 ${resourcesText}
-FILES: /data/admin/unit_plan/unit${unit.id}/${unit.id}. ${unit.title}.pdf, /data/admin/计算机视觉基础大纲.md, /data/admin/1_计算机视觉基础辅修说明.pdf
+FILES: /data/admin/unit_plan/unit${unit.id}/${unit.id}. ${unit.title}.pdf, /data/admin/unit_plan/unit${unit.id}/计算机视觉大纲_${unit.id}.md
+相关学习资源中，md文档为当前主计划大纲中的本单元任务，pdf文件为参考变量
+当前已提供：当前主计划大纲中的本单元任务与参考计划`,
 
-请根据上述内容，为学生制定一份详细的每周学习计划，帮助他们完成学习目标，并合理安排学习资源的使用。请直接返回计划内容，不要包含多余的废话。`,
 
   // 2. AI根据笔记重新调整学习计划提示词
   adjustPlan: (unit: any, plan: any, content: string, fileUrl: string | null, progressContext: string) => `学生提交了学习笔记。请根据学生的笔记进度，动态调整先前的学习计划，以便学生在该周剩下的时间里完成学习目标。
